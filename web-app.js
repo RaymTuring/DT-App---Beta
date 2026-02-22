@@ -2,9 +2,19 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const PORT = 18792;
 const DATA_DIR = '/Users/raymondturing/Documents/Data-Toalha';
+
+function sanitize(str) {
+    if (typeof str !== 'string') return '';
+    return str.replace(/[<>'";&]/g, '').substring(0, 1000);
+}
+
+function hashPassword(password) {
+    return crypto.createHash('sha256').update(password + 'DataToalhaSalt2026').digest('hex').substring(0, 64);
+}
 
 let data = {
     users: [],
@@ -77,10 +87,18 @@ function loadUsers() {
     try {
         if (fs.existsSync(usersFile)) {
             data.users = JSON.parse(fs.readFileSync(usersFile, 'utf8'));
+            let updated = false;
+            data.users.forEach(u => {
+                if (!u.passwordHash) {
+                    u.passwordHash = hashPassword(u.password);
+                    updated = true;
+                }
+            });
+            if (updated) saveUsers();
         } else {
             data.users = [
-                { id: 'admin1', username: 'admin', password: 'admin123', role: 'admin', name: 'Administrator' },
-                { id: 'user1', username: 'user', password: 'user123', role: 'user', name: 'Regular User' }
+                { id: 'admin1', username: 'admin', passwordHash: hashPassword('admin123'), role: 'admin', name: 'Administrator' },
+                { id: 'user1', username: 'user', passwordHash: hashPassword('user123'), role: 'user', name: 'Regular User' }
             ];
             fs.mkdirSync(path.dirname(usersFile), { recursive: true });
             fs.writeFileSync(usersFile, JSON.stringify(data.users, null, 2));
@@ -368,11 +386,16 @@ const html = `
             <div class="card">
                 <h3>Community Polls by Category</h3>
                 <div class="form-group">
+                    <label>Search by Poll Code:</label>
+                    <input type="text" id="pollCodeSearch" placeholder="Enter poll code..." oninput="searchPollByCode()" style="margin-bottom:10px;">
+                </div>
+                <div class="form-group">
                     <label>Select Category:</label>
                     <select id="resultsCategorySelect" onchange="loadCommunityResults()">
                         <option value="">All Categories (General)</option>
                     </select>
                 </div>
+                <div id="searchResult"></div>
                 <div id="communityResults"></div>
             </div>
         </div>
@@ -423,6 +446,32 @@ const html = `
             <div class="card">
                 <h3>Available Products</h3>
                 <div id="productsList"></div>
+            </div>
+            
+            <div class="card">
+                <h3>🎁 Redeem Voucher</h3>
+                <p style="color:#666;margin-bottom:15px;">Received a gift? Enter your voucher code to claim it!</p>
+                <div class="form-group">
+                    <label>Voucher Code *</label>
+                    <input type="text" id="redeemVoucherCode" placeholder="Enter voucher code">
+                </div>
+                <div class="form-group">
+                    <label>Your Name *</label>
+                    <input type="text" id="redeemName" placeholder="Your full name">
+                </div>
+                <div class="form-group">
+                    <label>Email *</label>
+                    <input type="email" id="redeemEmail" placeholder="your@email.com">
+                </div>
+                <div class="form-group">
+                    <label>Telephone</label>
+                    <input type="text" id="redeemTelephone" placeholder="+55 11 99999-9999">
+                </div>
+                <div class="form-group">
+                    <label>Delivery Address *</label>
+                    <input type="text" id="redeemAddress" placeholder="Full delivery address">
+                </div>
+                <button class="btn" onclick="redeemVoucher()">Redeem Voucher</button>
             </div>
             
             <div class="card">
@@ -1004,6 +1053,28 @@ const html = `
             }
         }
         
+        async function searchPollByCode() {
+            const code = document.getElementById('pollCodeSearch').value.trim().toUpperCase();
+            if (code.length < 3) {
+                document.getElementById('searchResult').innerHTML = '';
+                return;
+            }
+            
+            const polls = await api('/polls');
+            const poll = polls.find(p => p.shareCode && p.shareCode.toUpperCase() === code);
+            
+            if (poll) {
+                let html = '<div class="poll-card" style="border:2px solid #4A90D9;cursor:pointer;" onclick="viewPollResults(\\'' + poll.id + '\\')">';
+                html += '<h4>' + poll.title + '</h4>';
+                html += '<p>Category: ' + (poll.category || 'Other') + '</p>';
+                html += '<p>Click to view results and vote →</p>';
+                html += '</div>';
+                document.getElementById('searchResult').innerHTML = html;
+            } else {
+                document.getElementById('searchResult').innerHTML = '<p style="color:#666;">No poll found with this code</p>';
+            }
+        }
+        
         async function loadResults() {
             const votes = await api('/votes');
             const candidates = await api('/all-candidates');
@@ -1041,8 +1112,62 @@ const html = `
             }
             document.getElementById('politicalResults').innerHTML = politicalHtml;
             
+            // Add charts for each political election
+            const elections = [...new Set(Object.keys(stats).map(k => {
+                const [country, role] = k.split(' - ');
+                return { country, role };
+            }))];
+            
+            for (const election of elections) {
+                const candleData = await api('/candle-history?country=' + encodeURIComponent(election.country) + '&role=' + encodeURIComponent(election.role));
+                if (candleData && candleData.history && candleData.history.length > 0) {
+                    const chartHtml = await generatePoliticalChart(election.country, election.role, candleData);
+                    document.getElementById('politicalResults').innerHTML += chartHtml;
+                }
+            }
+            
             // Load community results
             loadCommunityResults();
+        }
+        
+        async function generatePoliticalChart(country, role, candleData) {
+            const { option1, option2, history } = candleData;
+            let html = '<div class="card" style="margin-top:20px;background:#1a1a2e;color:white;">';
+            html += '<h4 style="color:white;">📈 ' + country + ' - ' + role + ': ' + option1.name + ' vs ' + option2.name + '</h4>';
+            
+            const height = 150;
+            const width = 500;
+            
+            html += '<div style="margin-top:15px;overflow-x:auto;">';
+            html += '<svg width="' + width + '" height="' + (height + 40) + '" style="background:#0f0f1e;border-radius:8px;">';
+            html += '<line x1="0" y1="' + (height/2) + '" x2="' + width + '" y2="' + (height/2) + '" stroke="#333" stroke-width="1" stroke-dasharray="5,5"/>';
+            
+            const candleWidth = Math.max(10, (width - 40) / history.length);
+            
+            history.forEach((candle, idx) => {
+                const x = 20 + idx * candleWidth;
+                const centerY = height / 2;
+                const pct = candle.closePct / 100;
+                const y = centerY - ((pct - 0.5) * height);
+                const color = candle.closePct >= 50 ? '#00ff88' : '#ff4444';
+                const prevPct = candle.openPct / 100;
+                const prevY = centerY - ((prevPct - 0.5) * height);
+                
+                html += '<line x1="' + (x + candleWidth/2) + '" y1="' + prevY + '" x2="' + (x + candleWidth/2) + '" y2="' + y + '" stroke="' + color + '" stroke-width="2"/>';
+                const bodyHeight = Math.max(4, Math.abs(y - prevY));
+                const bodyY = Math.min(y, prevY);
+                html += '<rect x="' + x + '" y="' + bodyY + '" width="' + (candleWidth - 4) + '" height="' + bodyHeight + '" fill="' + color + '" rx="2"/>';
+            });
+            
+            html += '<text x="10" y="15" fill="#00ff88" font-size="11">' + option1.name + '</text>';
+            html += '<text x="10" y="30" fill="#888" font-size="10">(' + history[history.length-1].votes1 + ' votes)</text>';
+            html += '<text x="10" y="' + (height - 5) + '" fill="#ff4444" font-size="11">' + option2.name + '</text>';
+            html += '<text x="10" y="' + (height + 15) + '" fill="#888" font-size="10">(' + history[history.length-1].votes2 + ' votes)</text>';
+            
+            html += '</svg>';
+            html += '</div>';
+            html += '</div>';
+            return html;
         }
         
         async function loadCommunityResults() {
@@ -1525,6 +1650,45 @@ const html = `
             loadPollRanking();
         }
         
+        async function redeemVoucher() {
+            if (!currentUser) {
+                alert('Please login to redeem voucher');
+                return;
+            }
+            
+            const voucherCode = document.getElementById('redeemVoucherCode').value.trim().toUpperCase();
+            const name = document.getElementById('redeemName').value.trim();
+            const email = document.getElementById('redeemEmail').value.trim();
+            const telephone = document.getElementById('redeemTelephone').value.trim();
+            const address = document.getElementById('redeemAddress').value.trim();
+            
+            if (!voucherCode || !name || !email || !address) {
+                alert('Please fill all required fields');
+                return;
+            }
+            
+            const result = await api('/redeem-voucher', 'POST', {
+                voucherCode,
+                name,
+                email,
+                telephone,
+                address,
+                userId: currentUser.username
+            });
+            
+            if (result && result.success) {
+                alert('Voucher redeemed successfully! Your gift will be delivered to the provided address.');
+                document.getElementById('redeemVoucherCode').value = '';
+                document.getElementById('redeemName').value = '';
+                document.getElementById('redeemEmail').value = '';
+                document.getElementById('redeemTelephone').value = '';
+                document.getElementById('redeemAddress').value = '';
+                loadProducts();
+            } else {
+                alert(result?.error || 'Failed to redeem voucher');
+            }
+        }
+        
         async function loadProducts() {
             const products = await api('/products');
             const polls = await api('/polls?type=community&approved=true');
@@ -1642,7 +1806,7 @@ const html = `
             });
             
             if (result && result.success) {
-                alert('Gift purchased! Recipient will be notified to claim after registering and voting.');
+                alert('Gift purchased! Voucher Code: ' + result.voucherCode + '\n\nShare this code with ' + recipientName + ' to claim their gift after registering and voting.');
                 closeBuyGiftModal();
                 loadProducts();
             }
@@ -1950,6 +2114,10 @@ const server = http.createServer((req, res) => {
                     vote.timestamp = new Date().toISOString();
                     vote.choices = [{ candidateName: vote.candidateName, role: vote.role }];
                     data.votes.push(vote);
+                    
+                    // Record political candle history
+                    recordPoliticalCandleHistory(vote.country, vote.role);
+                    
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ success: true }));
                 } catch (e) {
@@ -2089,37 +2257,140 @@ const server = http.createServer((req, res) => {
             data.candleHistory[key] = history;
         }
         
-        // Get candle history
-        if (path === 'candle-history' && req.method === 'GET') {
-            const pollId = url.searchParams.get('pollId');
-            const poll = data.polls.find(p => p.id === pollId);
-            if (!poll || !poll.options || poll.options.length < 2) {
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify([]));
-                return;
-            }
+        function recordPoliticalCandleHistory(country, role) {
+            const countryVotes = data.votes.filter(v => v.country === country && v.role === role);
+            const candidates = data.candidates.filter(c => c.country && c.country.toLowerCase() === country.toLowerCase() && c.role === role);
             
-            const pollVotes = data.pollVotes.filter(v => v.pollId === pollId);
-            const votesByOption = {};
-            poll.options.forEach(opt => {
-                votesByOption[opt.id] = pollVotes.filter(v => v.optionId === opt.id).length;
+            if (candidates.length < 2) return;
+            
+            const votesByCandidate = {};
+            candidates.forEach(c => {
+                votesByCandidate[c.id] = countryVotes.filter(v => v.choices && v.choices.some(ch => ch.candidateName === c.name)).length;
             });
             
-            const sortedOptions = poll.options.slice().sort((a, b) => votesByOption[b.id] - votesByOption[a.id]);
-            const top1 = sortedOptions[0] ? sortedOptions[0] : null;
-            const top2 = sortedOptions[1] ? sortedOptions[1] : null;
+            const sortedCandidates = candidates.slice().sort((a, b) => votesByCandidate[b.id] - votesByCandidate[a.id]);
+            const top1 = sortedCandidates[0];
+            const top2 = sortedCandidates[1];
             
-            if (!top1 || !top2) {
+            if (!top1 || !top2) return;
+            
+            const key = 'political_' + country + '_' + role + '_' + top1.id + '_' + top2.id;
+            let history = data.candleHistory[key] || [];
+            
+            const totalVotes = countryVotes.length;
+            if (totalVotes === 0) return;
+            
+            const currentVotes1 = votesByCandidate[top1.id];
+            const currentVotes2 = votesByCandidate[top2.id];
+            const pct1 = totalVotes > 0 ? (currentVotes1 / totalVotes * 100) : 50;
+            const pct2 = 100 - pct1;
+            
+            const now = new Date().toISOString();
+            
+            if (history.length > 0) {
+                const last = history[history.length - 1];
+                if (Math.abs(last.closePct - pct1) > 0.1) {
+                    history.push({
+                        timestamp: now,
+                        openPct: last.closePct,
+                        closePct: pct1,
+                        highPct: Math.max(last.highPct, pct1, pct2),
+                        lowPct: Math.min(last.lowPct, pct1, pct2),
+                        votes1: currentVotes1,
+                        votes2: currentVotes2,
+                        total: totalVotes
+                    });
+                }
+            } else {
+                history.push({
+                    timestamp: now,
+                    openPct: 50,
+                    closePct: pct1,
+                    highPct: Math.max(pct1, pct2),
+                    lowPct: Math.min(pct1, pct2),
+                    votes1: currentVotes1,
+                    votes2: currentVotes2,
+                    total: totalVotes
+                });
+            }
+            
+            data.candleHistory[key] = history;
+        }
+        
+        // Get candle history (community or political)
+        if (path === 'candle-history' && req.method === 'GET') {
+            const pollId = url.searchParams.get('pollId');
+            const country = url.searchParams.get('country');
+            const role = url.searchParams.get('role');
+            
+            // Community poll
+            if (pollId) {
+                const poll = data.polls.find(p => p.id === pollId);
+                if (!poll || !poll.options || poll.options.length < 2) {
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ type: 'community', history: [] }));
+                    return;
+                }
+                
+                const pollVotes = data.pollVotes.filter(v => v.pollId === pollId);
+                const votesByOption = {};
+                poll.options.forEach(opt => {
+                    votesByOption[opt.id] = pollVotes.filter(v => v.optionId === opt.id).length;
+                });
+                
+                const sortedOptions = poll.options.slice().sort((a, b) => votesByOption[b.id] - votesByOption[a.id]);
+                const top1 = sortedOptions[0] ? sortedOptions[0] : null;
+                const top2 = sortedOptions[1] ? sortedOptions[1] : null;
+                
+                if (!top1 || !top2) {
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ type: 'community', history: [] }));
+                    return;
+                }
+                
+                const key = pollId + '_' + top1.id + '_' + top2.id;
+                const history = data.candleHistory[key] || [];
+                
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify([]));
+                res.end(JSON.stringify({ type: 'community', option1: top1, option2: top2, history }));
                 return;
             }
             
-            const key = pollId + '_' + top1.id + '_' + top2.id;
-            const history = data.candleHistory[key] || [];
+            // Political election
+            if (country && role) {
+                const candidates = data.candidates.filter(c => c.country && c.country.toLowerCase() === country.toLowerCase() && c.role === role);
+                if (candidates.length < 2) {
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ type: 'political', history: [] }));
+                    return;
+                }
+                
+                const countryVotes = data.votes.filter(v => v.country === country && v.role === role);
+                const votesByCandidate = {};
+                candidates.forEach(c => {
+                    votesByCandidate[c.id] = countryVotes.filter(v => v.choices && v.choices.some(ch => ch.candidateName === c.name)).length;
+                });
+                
+                const sortedCandidates = candidates.slice().sort((a, b) => votesByCandidate[b.id] - votesByCandidate[a.id]);
+                const top1 = sortedCandidates[0];
+                const top2 = sortedCandidates[1];
+                
+                if (!top1 || !top2) {
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ type: 'political', history: [] }));
+                    return;
+                }
+                
+                const key = 'political_' + country + '_' + role + '_' + top1.id + '_' + top2.id;
+                const history = data.candleHistory[key] || [];
+                
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ type: 'political', option1: top1, option2: top2, history }));
+                return;
+            }
             
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ option1: top1, option2: top2, history }));
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing parameters' }));
             return;
         }
         
@@ -2289,9 +2560,49 @@ const server = http.createServer((req, res) => {
                 try {
                     const order = JSON.parse(body);
                     order.id = generateId();
+                    order.voucherCode = generateShareCode();
                     order.createdAt = new Date().toISOString();
                     order.claimed = false;
                     data.productOrders.push(order);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true, voucherCode: order.voucherCode }));
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+            });
+            return;
+        }
+        
+        // Redeem voucher
+        if (path === 'redeem-voucher' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const { voucherCode, name, email, telephone, address, userId } = JSON.parse(body);
+                    const order = data.productOrders.find(o => o.voucherCode === voucherCode);
+                    if (!order) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Invalid voucher code' }));
+                        return;
+                    }
+                    if (order.claimed) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Voucher already claimed' }));
+                        return;
+                    }
+                    if (order.recipientContact !== userId) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'This voucher is not for you' }));
+                        return;
+                    }
+                    order.claimed = true;
+                    order.redeemedAt = new Date().toISOString();
+                    order.recipientName = sanitize(name);
+                    order.recipientEmail = sanitize(email);
+                    order.recipientTelephone = sanitize(telephone);
+                    order.recipientAddress = sanitize(address);
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ success: true }));
                 } catch (e) {
@@ -2340,9 +2651,11 @@ const server = http.createServer((req, res) => {
             req.on('end', () => {
                 try {
                     const { username, password } = JSON.parse(body);
-                    const user = data.users.find(u => u.username === username && u.password === password);
+                    const safeUsername = sanitize(username);
+                    const passwordHash = hashPassword(password);
+                    const user = data.users.find(u => u.username === safeUsername && u.passwordHash === passwordHash);
                     if (user) {
-                        const { password, ...safeUser } = user;
+                        const { password, passwordHash, ...safeUser } = user;
                         res.writeHead(200, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ success: true, user: safeUser }));
                     } else {
@@ -2364,22 +2677,23 @@ const server = http.createServer((req, res) => {
             req.on('end', () => {
                 try {
                     const { username, password, name } = JSON.parse(body);
-                    if (data.users.find(u => u.username === username)) {
+                    const safeUsername = sanitize(username);
+                    if (data.users.find(u => u.username === safeUsername)) {
                         res.writeHead(400, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ error: 'Username already exists' }));
                         return;
                     }
                     const newUser = {
                         id: generateId(),
-                        username,
-                        password,
-                        name: name || username,
+                        username: safeUsername,
+                        passwordHash: hashPassword(password),
+                        name: sanitize(name || username),
                         role: 'user',
                         createdAt: new Date().toISOString()
                     };
                     data.users.push(newUser);
                     saveUsers();
-                    const { password: pwd, ...safeUser } = newUser;
+                    const { passwordHash, ...safeUser } = newUser;
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ success: true, user: safeUser }));
                 } catch (e) {

@@ -77,6 +77,12 @@ function generateShareCode() {
 const GLOBAL_ROLES = ['President', 'Senator'];
 const STATE_ROLES = ['Governor', 'Mayor', 'MP', 'Deputy'];
 
+const POLL_CATEGORIES = [
+    'Futebol', 'Music', 'Celebrities', 'YouTubers', 'TV Programs', 
+    'Movies', 'Sports', 'Technology', 'Gaming', 'Food', 
+    'Travel', 'Fashion', 'Education', 'Politics', 'Science', 'Other'
+];
+
 const html = `
 <!DOCTYPE html>
 <html lang="en">
@@ -257,9 +263,25 @@ const html = `
             </div>
             
             <div id="communitySection" style="display:none;">
-                <div class="card">
-                    <h3>Step 2: Select Poll</h3>
-                    <div id="availablePolls"></div>
+                <div class="card" id="categorySelectCard">
+                    <h3>Step 2: Select Category</h3>
+                    <div class="form-group">
+                        <select id="categorySelect" onchange="onCategoryChange()">
+                            <option value="">Select a Category</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="card" id="pollListCard" style="display:none;">
+                    <h3>Step 3: Available Polls</h3>
+                    <button class="btn btn-small btn-secondary" onclick="backToCategories()" style="margin-bottom:15px;">← Back to Categories</button>
+                    <div id="availablePollsList"></div>
+                </div>
+                
+                <div class="card" id="pollVotingCard" style="display:none;">
+                    <h3>Step 4: Cast Your Vote</h3>
+                    <button class="btn btn-small btn-secondary" onclick="backToPollList()" style="margin-bottom:15px;">← Back to Polls</button>
+                    <div id="pollVotingOptions"></div>
                 </div>
             </div>
             
@@ -311,10 +333,37 @@ const html = `
         <div id="polls" class="section">
             <div class="header">
                 <h2>My Polls</h2>
-                <button class="btn" onclick="showCreatePoll()">+ Create Poll</button>
+                <button class="btn" onclick="showCreatePollForm()">+ Create Poll</button>
             </div>
             
             <div id="pollsList"></div>
+        </div>
+        
+        <!-- CREATE POLL MODAL -->
+        <div id="createPollModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;">
+            <div style="background:white;max-width:500px;margin:100px auto;padding:30px;border-radius:12px;">
+                <h3>Create Community Poll</h3>
+                <div class="form-group">
+                    <label>Poll Title *</label>
+                    <input type="text" id="newPollTitle" placeholder="e.g., Best Player 2024">
+                </div>
+                <div class="form-group">
+                    <label>Category *</label>
+                    <select id="newPollCategory"></select>
+                </div>
+                <div class="form-group">
+                    <label>Description (optional)</label>
+                    <input type="text" id="newPollDescription" placeholder="Brief description">
+                </div>
+                <div class="form-group">
+                    <label>Options (comma separated) *</label>
+                    <input type="text" id="newPollOptions" placeholder="e.g., Option A, Option B, Option C">
+                </div>
+                <div class="btn-group">
+                    <button class="btn" onclick="submitCreatePoll()">Create Poll</button>
+                    <button class="btn btn-secondary" onclick="closeCreatePollModal()">Cancel</button>
+                </div>
+            </div>
         </div>
         
         <!-- ADMIN -->
@@ -375,7 +424,12 @@ const html = `
             </div>
             
             <div class="card">
-                <h3>📝 Manage Polls</h3>
+                <h3>📝 Pending Polls (Awaiting Approval)</h3>
+                <div id="adminPendingPollsList"></div>
+            </div>
+            
+            <div class="card">
+                <h3>📝 Approved Polls</h3>
                 <div id="adminPollsList"></div>
             </div>
             
@@ -398,6 +452,11 @@ const html = `
         
         const GLOBAL_ROLES = ['President', 'Senator'];
         const STATE_ROLES = ['Governor', 'Mayor', 'MP', 'Deputy'];
+        
+        const POLL_CATEGORIES = ['Futebol', 'Music', 'Celebrities', 'YouTubers', 'TV Programs', 'Movies', 'Sports', 'Technology', 'Gaming', 'Food', 'Travel', 'Fashion', 'Education', 'Politics', 'Science', 'Other'];
+        
+        let selectedCategory = null;
+        let selectedPollId = null;
         
         function showSection(id) {
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -457,6 +516,16 @@ const html = `
             document.getElementById('stateInput').value = '';
             document.getElementById('stateGroup').style.display = 'none';
             document.getElementById('candidatesList').innerHTML = '';
+            document.getElementById('categorySelect').innerHTML = '<option value="">Select a Category</option>';
+            POLL_CATEGORIES.forEach(cat => {
+                document.getElementById('categorySelect').innerHTML += '<option value="' + cat + '">' + cat + '</option>';
+            });
+            document.getElementById('categorySelect').value = '';
+            document.getElementById('pollListCard').style.display = 'none';
+            document.getElementById('pollVotingCard').style.display = 'none';
+            document.getElementById('categorySelectCard').style.display = 'block';
+            selectedCategory = null;
+            selectedPollId = null;
             currentPollId = null;
             currentPollType = null;
             selectedCandidateId = null;
@@ -472,8 +541,34 @@ const html = `
                 document.getElementById('politicalSection').style.display = 'block';
             } else if (type === 'community') {
                 document.getElementById('communitySection').style.display = 'block';
+                loadVoteForm();
+            }
+        }
+        
+        function onCategoryChange() {
+            selectedCategory = document.getElementById('categorySelect').value;
+            if (selectedCategory) {
+                document.getElementById('categorySelectCard').style.display = 'none';
+                document.getElementById('pollListCard').style.display = 'block';
+                document.getElementById('pollVotingCard').style.display = 'none';
                 loadCommunityPolls();
             }
+        }
+        
+        function backToCategories() {
+            document.getElementById('categorySelectCard').style.display = 'block';
+            document.getElementById('pollListCard').style.display = 'none';
+            document.getElementById('pollVotingCard').style.display = 'none';
+            document.getElementById('categorySelect').value = '';
+            selectedCategory = null;
+        }
+        
+        function backToPollList() {
+            document.getElementById('categorySelectCard').style.display = 'none';
+            document.getElementById('pollListCard').style.display = 'block';
+            document.getElementById('pollVotingCard').style.display = 'none';
+            selectedPollId = null;
+            loadCommunityPolls();
         }
         
         function onRoleChange() {
@@ -560,21 +655,28 @@ const html = `
             });
         }
         
+        function getVotedPolls() {
+            return JSON.parse(localStorage.getItem('votedPolls') || '[]');
+        }
+        
         async function loadCommunityPolls() {
-            const polls = await api('/polls?type=community');
-            const myVotedPolls = await api('/my-votes');
+            const polls = await api('/polls?type=community&approved=true');
             
-            if (!polls || !myVotedPolls) return;
+            if (!polls) return;
             
-            const votedIds = myVotedPolls.map(v => v.pollId);
+            const votedPolls = getVotedPolls();
+            
+            const filteredPolls = selectedCategory 
+                ? polls.filter(p => p.category === selectedCategory)
+                : polls;
             
             let html = '';
-            if (polls.length === 0) {
-                html = '<p>No community polls available. Create one!</p>';
+            if (filteredPolls.length === 0) {
+                html = '<div class="empty-state"><p>No approved polls in this category yet.</p><p>Create one!</p></div>';
             } else {
-                polls.forEach(p => {
-                    const hasVoted = votedIds.includes(p.id);
-                    html += '<div class="poll-card">';
+                filteredPolls.forEach(p => {
+                    const hasVoted = votedPolls.includes(p.id);
+                    html += '<div class="poll-card" style="cursor:pointer;" onclick="selectPollForVoting(\\'' + p.id + '\\')">';
                     html += '<div class="poll-header"><h4>' + p.title + '</h4>';
                     if (hasVoted) {
                         html += '<span class="voted-badge">✓ You Voted</span>';
@@ -582,26 +684,46 @@ const html = `
                     html += '</div>';
                     if (p.description) html += '<p>' + p.description + '</p>';
                     html += '<p>' + p.options.length + ' options | ' + p.votes + ' votes</p>';
-                    
-                    if (!hasVoted) {
-                        html += '<div style="margin-top:15px;">';
-                        html += '<label>Vote:</label>';
-                        p.options.forEach(opt => {
-                            html += '<div class="candidate-row" onclick="selectPollOption(\\'' + p.id + '\\', \\'' + opt.id + '\\', \\'' + opt.text.replace(/'/g, "\\\\'") + '\\')">';
-                            html += '<input type="radio" name="poll_' + p.id + '" value="' + opt.id + '">';
-                            html += '<div class="candidate-info"><div class="candidate-name">' + opt.text + '</div></div>';
-                            html += '</div>';
-                        });
-                        html += '</div>';
-                    }
-                    
-                    html += '<div style="margin-top:15px;">';
-                    html += '<button class="btn btn-small btn-secondary" onclick="sharePoll(\\'' + p.shareCode + '\\')">📤 Share Poll</button>';
-                    html += '</div>';
+                    html += '<p style="color:#4A90D9;font-size:12px;">Click to vote →</p>';
                     html += '</div>';
                 });
             }
-            document.getElementById('availablePolls').innerHTML = html;
+            document.getElementById('availablePollsList').innerHTML = html;
+        }
+        
+        async function selectPollForVoting(pollId) {
+            selectedPollId = pollId;
+            const polls = await api('/polls?type=community&approved=true');
+            
+            const poll = polls.find(p => p.id === pollId);
+            if (!poll) return;
+            
+            const votedPolls = getVotedPolls();
+            const hasVoted = votedPolls.includes(pollId);
+            
+            document.getElementById('categorySelectCard').style.display = 'none';
+            document.getElementById('pollListCard').style.display = 'none';
+            document.getElementById('pollVotingCard').style.display = 'block';
+            
+            let html = '<h4 style="margin-bottom:15px;">' + poll.title + '</h4>';
+            if (poll.description) html += '<p style="margin-bottom:15px;">' + poll.description + '</p>';
+            
+            if (hasVoted) {
+                html += '<div class="voted-badge" style="padding:10px;margin-bottom:15px;">You have already voted in this poll</div>';
+            } else {
+                poll.options.forEach(opt => {
+                    html += '<div class="candidate-row" onclick="selectPollOption(\\'' + poll.id + '\\', \\'' + opt.id + '\\', \\'' + opt.text.replace(/'/g, "\\\\'") + '\\')">';
+                    html += '<input type="radio" name="poll_' + poll.id + '" value="' + opt.id + '">';
+                    html += '<div class="candidate-info"><div class="candidate-name">' + opt.text + '</div></div>';
+                    html += '</div>';
+                });
+            }
+            
+            html += '<div style="margin-top:15px;">';
+            html += '<button class="btn btn-small btn-secondary" onclick="sharePoll(\\'' + poll.shareCode + '\\')">📤 Share Poll</button>';
+            html += '</div>';
+            
+            document.getElementById('pollVotingOptions').innerHTML = html;
         }
         
         function selectPollOption(pollId, optionId, optionText) {
@@ -627,6 +749,8 @@ const html = `
                 alert('Please select election type');
                 return;
             }
+            
+            const votedPolls = JSON.parse(localStorage.getItem('votedPolls') || '[]');
             
             if (electionType === 'political') {
                 const role = document.getElementById('roleSelect').value;
@@ -654,6 +778,12 @@ const html = `
                     }
                 }
                 
+                const pollKey = 'political_' + role + '_' + country;
+                if (votedPolls.includes(pollKey)) {
+                    alert('You have already voted in this election');
+                    return;
+                }
+                
                 const result = await api('/vote', 'POST', {
                     voterName,
                     electionType: 'political',
@@ -665,23 +795,32 @@ const html = `
                 });
                 
                 if (result && result.success) {
+                    votedPolls.push(pollKey);
+                    localStorage.setItem('votedPolls', JSON.stringify(votedPolls));
                     alert('Vote submitted successfully!');
                     showSection('home');
                 }
             } else if (electionType === 'community') {
-                if (!currentPollId || !selectedCandidateId) {
+                if (!selectedPollId || !selectedCandidateId) {
                     alert('Please select a poll and option');
+                    return;
+                }
+                
+                if (votedPolls.includes(selectedPollId)) {
+                    alert('You have already voted in this poll');
                     return;
                 }
                 
                 const result = await api('/poll-vote', 'POST', {
                     voterName,
-                    pollId: currentPollId,
+                    pollId: selectedPollId,
                     optionId: selectedCandidateId,
                     optionText: selectedCandidateName
                 });
                 
                 if (result && result.success) {
+                    votedPolls.push(selectedPollId);
+                    localStorage.setItem('votedPolls', JSON.stringify(votedPolls));
                     alert('Vote submitted successfully!');
                     showSection('home');
                 }
@@ -808,25 +947,50 @@ const html = `
             }
         }
         
-        async function showCreatePoll() {
-            const title = prompt('Poll title:');
-            if (!title) return;
-            const description = prompt('Description (optional):') || '';
-            const options = prompt('Options (comma separated, e.g. Yes,No,Maybe):');
-            if (!options) return;
+        async function showCreatePollForm() {
+            const modal = document.getElementById('createPollModal');
+            const categorySelect = document.getElementById('newPollCategory');
+            categorySelect.innerHTML = '';
+            POLL_CATEGORIES.forEach(cat => {
+                categorySelect.innerHTML += '<option value="' + cat + '">' + cat + '</option>';
+            });
+            modal.style.display = 'block';
+        }
+        
+        function closeCreatePollModal() {
+            document.getElementById('createPollModal').style.display = 'none';
+            document.getElementById('newPollTitle').value = '';
+            document.getElementById('newPollCategory').value = '';
+            document.getElementById('newPollDescription').value = '';
+            document.getElementById('newPollOptions').value = '';
+        }
+        
+        async function submitCreatePoll() {
+            const title = document.getElementById('newPollTitle').value.trim();
+            const category = document.getElementById('newPollCategory').value;
+            const description = document.getElementById('newPollDescription').value.trim();
+            const optionsStr = document.getElementById('newPollOptions').value.trim();
             
-            const optionList = options.split(',').map(o => ({ id: generateId(), text: o.trim(), votes: 0 }));
+            if (!title || !category || !optionsStr) {
+                alert('Please fill in all required fields');
+                return;
+            }
+            
+            const options = optionsStr.split(',').map(o => ({ id: generateId(), text: o.trim(), votes: 0 }));
             const result = await api('/polls', 'POST', { 
                 title, 
+                category,
                 description, 
-                options: optionList, 
+                options, 
                 shareCode: generateShareCode(),
                 type: 'community',
+                approved: false,
                 createdBy: 'User'
             });
             
             if (result && result.success) {
-                alert('Poll created! Code: ' + (result.shareCode || ''));
+                alert('Poll created! It will be visible after admin approval. Code: ' + (result.shareCode || ''));
+                closeCreatePollModal();
                 loadPolls();
             }
         }
@@ -934,18 +1098,41 @@ const html = `
             const polls = await api('/polls');
             if (!polls) return;
             
-            if (polls.length === 0) {
-                document.getElementById('adminPollsList').innerHTML = '<p>No polls</p>';
-                return;
+            const pendingPolls = polls.filter(p => !p.approved);
+            const approvedPolls = polls.filter(p => p.approved);
+            
+            if (pendingPolls.length === 0) {
+                document.getElementById('adminPendingPollsList').innerHTML = '<p>No pending polls</p>';
+            } else {
+                let html = '<table><tr><th>Title</th><th>Category</th><th>Code</th><th>Votes</th><th>Action</th></tr>';
+                pendingPolls.forEach(p => {
+                    html += '<tr><td>' + p.title + '</td><td>' + (p.category || 'N/A') + '</td><td>' + p.shareCode + '</td><td>' + p.votes + '</td>';
+                    html += '<td><button class="btn btn-success btn-small" onclick="approvePoll(\\'' + p.id + '\\')">Approve</button> ';
+                    html += '<button class="btn btn-danger btn-small" onclick="removePoll(\\'' + p.id + '\\')">Reject</button></td></tr>';
+                });
+                html += '</table>';
+                document.getElementById('adminPendingPollsList').innerHTML = html;
             }
             
-            let html = '<table><tr><th>Title</th><th>Type</th><th>Code</th><th>Votes</th><th>Action</th></tr>';
-            polls.forEach(p => {
-                html += '<tr><td>' + p.title + '</td><td>' + (p.type === 'political' ? '🏛️ Political' : '👥 Community') + '</td><td>' + p.shareCode + '</td><td>' + p.votes + '</td>';
-                html += '<td><button class="btn btn-danger btn-small" onclick="removePoll(\\'' + p.id + '\\')">Delete</button></td></tr>';
-            });
-            html += '</table>';
-            document.getElementById('adminPollsList').innerHTML = html;
+            if (approvedPolls.length === 0) {
+                document.getElementById('adminPollsList').innerHTML = '<p>No approved polls</p>';
+            } else {
+                let html = '<table><tr><th>Title</th><th>Category</th><th>Code</th><th>Votes</th><th>Action</th></tr>';
+                approvedPolls.forEach(p => {
+                    html += '<tr><td>' + p.title + '</td><td>' + (p.category || 'N/A') + '</td><td>' + p.shareCode + '</td><td>' + p.votes + '</td>';
+                    html += '<td><button class="btn btn-danger btn-small" onclick="removePoll(\\'' + p.id + '\\')">Delete</button></td></tr>';
+                });
+                html += '</table>';
+                document.getElementById('adminPollsList').innerHTML = html;
+            }
+        }
+        
+        async function approvePoll(id) {
+            const result = await api('/polls/approve/' + id, 'POST');
+            if (result && result.success) {
+                alert('Poll approved!');
+                loadAdminPolls();
+            }
         }
         
         async function addCandidate() {
@@ -1185,8 +1372,27 @@ const server = http.createServer((req, res) => {
             if (url.searchParams.get('type')) {
                 polls = polls.filter(p => p.type === url.searchParams.get('type'));
             }
+            if (url.searchParams.get('approved') === 'true') {
+                polls = polls.filter(p => p.approved === true);
+            }
+            if (url.searchParams.get('approved') === 'false') {
+                polls = polls.filter(p => p.approved !== true);
+            }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(polls));
+            return;
+        }
+        
+        // Approve poll
+        const approveMatch = path.match(/^polls\/approve\/(.+)$/);
+        if (approveMatch && req.method === 'POST') {
+            const id = approveMatch[1];
+            const poll = data.polls.find(p => p.id === id);
+            if (poll) {
+                poll.approved = true;
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
             return;
         }
         
@@ -1199,6 +1405,9 @@ const server = http.createServer((req, res) => {
                     const poll = JSON.parse(body);
                     poll.id = generateId();
                     poll.createdAt = new Date().toISOString();
+                    if (poll.type === 'community' && poll.approved === undefined) {
+                        poll.approved = false;
+                    }
                     data.polls.push(poll);
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ success: true, shareCode: poll.shareCode }));

@@ -7,6 +7,7 @@ const PORT = 18792;
 const DATA_DIR = '/Users/raymondturing/Documents/Data-Toalha';
 
 let data = {
+    users: [],
     candidates: [],
     votes: [],
     polls: [],
@@ -32,6 +33,8 @@ function loadData() {
     data.cities = loadJSON('cities.json');
     
     console.log(`Loaded: ${data.countries.length} countries, ${data.states.length} states, ${data.cities.length} cities`);
+    
+    loadUsers();
     
     const candidatesFile = path.join(process.env.HOME || '/Users/raymondturing', 'Library/Application Support/DataToalha/candidates.json');
     try {
@@ -62,6 +65,35 @@ function saveCandidates() {
         fs.writeFileSync(candidatesFile, JSON.stringify(data.candidates, null, 2));
     } catch (e) {
         console.log('Error saving candidates:', e.message);
+    }
+}
+
+function loadUsers() {
+    const usersFile = path.join(process.env.HOME || '/Users/raymondturing', 'Library/Application Support/DataToalha/users.json');
+    try {
+        if (fs.existsSync(usersFile)) {
+            data.users = JSON.parse(fs.readFileSync(usersFile, 'utf8'));
+        } else {
+            data.users = [
+                { id: 'admin1', username: 'admin', password: 'admin123', role: 'admin', name: 'Administrator' },
+                { id: 'user1', username: 'user', password: 'user123', role: 'user', name: 'Regular User' }
+            ];
+            fs.mkdirSync(path.dirname(usersFile), { recursive: true });
+            fs.writeFileSync(usersFile, JSON.stringify(data.users, null, 2));
+        }
+    } catch (e) {
+        console.log('Error with users:', e.message);
+    }
+    console.log(`Total users: ${data.users.length}`);
+}
+
+function saveUsers() {
+    const usersFile = path.join(process.env.HOME || '/Users/raymondturing', 'Library/Application Support/DataToalha/users.json');
+    try {
+        fs.mkdirSync(path.dirname(usersFile), { recursive: true });
+        fs.writeFileSync(usersFile, JSON.stringify(data.users, null, 2));
+    } catch (e) {
+        console.log('Error saving users:', e.message);
     }
 }
 
@@ -164,15 +196,39 @@ const html = `
     </style>
 </head>
 <body>
+    <!-- LOGIN OVERLAY -->
+    <div id="loginOverlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);z-index:2000;display:flex;align-items:center;justify-content:center;">
+        <div style="background:white;padding:40px;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);text-align:center;max-width:400px;width:90%;">
+            <img src="/logo" style="max-width:150px;margin-bottom:20px;" alt="Data Toalha Logo">
+            <h2 style="color:#1a1a2e;margin-bottom:20px;">Data Toalha</h2>
+            <p style="color:#666;margin-bottom:30px;">Digital Voting Platform</p>
+            <div class="form-group">
+                <input type="text" id="loginUsername" placeholder="Username" style="text-align:center;">
+            </div>
+            <div class="form-group">
+                <input type="password" id="loginPassword" placeholder="Password" style="text-align:center;">
+            </div>
+            <button class="btn" onclick="doLogin()" style="width:100%;">Login</button>
+            <p style="margin-top:20px;font-size:12px;color:#888;">Default: admin/admin123 or user/user123</p>
+        </div>
+    </div>
+    
+    <div id="appContent" style="display:none;">
     <div class="sidebar">
-        <h1>📊 Data Toalha</h1>
+        <div style="text-align:center;margin-bottom:20px;">
+            <img src="/logo" style="max-width:120px;border-radius:8px;" alt="Data Toalha">
+        </div>
         <button class="active" onclick="showSection('home')">🏠 Home</button>
         <button onclick="showSection('vote')">🗳️ Cast Vote</button>
         <button onclick="showSection('results')">📊 Results</button>
         <button onclick="showSection('candidates')">👥 Candidates</button>
         <button onclick="showSection('polls')">📝 My Polls</button>
-        <button class="admin-only" onclick="showSection('admin')">⚙️ Admin Panel</button>
-        <button onclick="toggleAdminMode()" style="margin-top: 30px; background: #444;">🔒 Admin Mode</button>
+        <button id="adminMenuBtn" class="admin-only" onclick="showSection('admin')">⚙️ Admin Panel</button>
+        <div style="margin-top:auto;padding-top:20px;border-top:1px solid #444;">
+            <p style="font-size:12px;color:#888;margin-bottom:5px;">Logged in as:</p>
+            <p style="font-size:14px;color:#4A90D9;margin-bottom:10px;" id="currentUserName">-</p>
+            <button onclick="doLogout()" style="background:#444;width:100%;padding:8px;border:none;color:white;border-radius:6px;cursor:pointer;">Logout</button>
+        </div>
     </div>
     
     <div class="main">
@@ -286,12 +342,7 @@ const html = `
             </div>
             
             <div class="card">
-                <h3>Step 3: Your Information</h3>
-                <div class="form-group">
-                    <label>Your Name *</label>
-                    <input type="text" id="voterName" placeholder="Enter your name">
-                </div>
-                
+                <p style="color:#666;">Logged in as: <strong id="voterNameDisplay" style="color:#4A90D9;"></strong></p>
                 <button class="btn" onclick="submitVote()" style="margin-top: 20px;">Submit Vote</button>
             </div>
         </div>
@@ -514,7 +565,9 @@ const html = `
         async function loadVoteForm() {
             const electionType = document.getElementById('electionType').value;
             await loadStats();
-            document.getElementById('voterName').value = '';
+            if (document.getElementById('voterNameDisplay')) {
+                document.getElementById('voterNameDisplay').textContent = currentUser ? currentUser.name : 'Guest';
+            }
             if (!electionType) document.getElementById('electionType').value = '';
             document.getElementById('politicalSection').style.display = 'none';
             document.getElementById('communitySection').style.display = 'none';
@@ -677,8 +730,10 @@ const html = `
             });
         }
         
-        function getVotedPolls() {
-            return JSON.parse(localStorage.getItem('votedPolls') || '[]');
+        async function getVotedPolls() {
+            if (!currentUser) return [];
+            const myVotes = await api('/my-votes?userId=' + currentUser.id);
+            return myVotes ? myVotes.map(v => v.pollId) : [];
         }
         
         async function loadCommunityPolls() {
@@ -686,7 +741,7 @@ const html = `
             
             if (!polls) return;
             
-            const votedPolls = getVotedPolls();
+            const votedPolls = await getVotedPolls();
             
             const filteredPolls = selectedCategory 
                 ? polls.filter(p => p.category === selectedCategory)
@@ -720,7 +775,7 @@ const html = `
             const poll = polls.find(p => p.id === pollId);
             if (!poll) return;
             
-            const votedPolls = getVotedPolls();
+            const votedPolls = await getVotedPolls();
             const hasVoted = votedPolls.includes(pollId);
             
             document.getElementById('categorySelectCard').style.display = 'none';
@@ -759,20 +814,17 @@ const html = `
         }
         
         async function submitVote() {
-            const voterName = document.getElementById('voterName').value.trim();
-            const electionType = document.getElementById('electionType').value;
-            
-            if (!voterName) {
-                alert('Please enter your name');
+            if (!currentUser) {
+                alert('Please login to vote');
                 return;
             }
+            
+            const electionType = document.getElementById('electionType').value;
             
             if (!electionType) {
                 alert('Please select election type');
                 return;
             }
-            
-            const votedPolls = JSON.parse(localStorage.getItem('votedPolls') || '[]');
             
             if (electionType === 'political') {
                 const role = document.getElementById('roleSelect').value;
@@ -800,14 +852,9 @@ const html = `
                     }
                 }
                 
-                const pollKey = 'political_' + role + '_' + country;
-                if (votedPolls.includes(pollKey)) {
-                    alert('You have already voted in this election');
-                    return;
-                }
-                
                 const result = await api('/vote', 'POST', {
-                    voterName,
+                    userId: currentUser.id,
+                    userName: currentUser.name,
                     electionType: 'political',
                     role,
                     country,
@@ -817,10 +864,10 @@ const html = `
                 });
                 
                 if (result && result.success) {
-                    votedPolls.push(pollKey);
-                    localStorage.setItem('votedPolls', JSON.stringify(votedPolls));
                     alert('Vote submitted successfully!');
                     showSection('home');
+                } else if (result && result.error) {
+                    alert(result.error);
                 }
             } else if (electionType === 'community') {
                 if (!selectedPollId || !selectedCandidateId) {
@@ -828,23 +875,19 @@ const html = `
                     return;
                 }
                 
-                if (votedPolls.includes(selectedPollId)) {
-                    alert('You have already voted in this poll');
-                    return;
-                }
-                
                 const result = await api('/poll-vote', 'POST', {
-                    voterName,
+                    userId: currentUser.id,
+                    userName: currentUser.name,
                     pollId: selectedPollId,
                     optionId: selectedCandidateId,
                     optionText: selectedCandidateName
                 });
                 
                 if (result && result.success) {
-                    votedPolls.push(selectedPollId);
-                    localStorage.setItem('votedPolls', JSON.stringify(votedPolls));
                     alert('Vote submitted successfully!');
                     showSection('home');
+                } else if (result && result.error) {
+                    alert(result.error);
                 }
             }
         }
@@ -897,6 +940,8 @@ const html = `
             
             if (!polls) return;
             
+            const votedPolls = await getVotedPolls();
+            
             const filteredPolls = selectedCategory 
                 ? polls.filter(p => p.category === selectedCategory)
                 : polls;
@@ -908,7 +953,6 @@ const html = `
                 filteredPolls.forEach(p => {
                     const pVotes = pollVotes.filter(v => v.pollId === p.id);
                     const total = pVotes.length;
-                    const votedPolls = getVotedPolls();
                     const hasVoted = votedPolls.includes(p.id);
                     
                     if (selectedCategory === '') {
@@ -946,7 +990,7 @@ const html = `
             const pollVotes = await api('/poll-votes');
             const pVotes = pollVotes.filter(v => v.pollId === pollId);
             const total = pVotes.length;
-            const votedPolls = getVotedPolls();
+            const votedPolls = await getVotedPolls();
             const hasVoted = votedPolls.includes(pollId);
             
             let html = '<div class="card">';
@@ -1309,6 +1353,64 @@ const html = `
         }
         
         loadStats();
+        
+        let currentUser = null;
+        
+        function doLogin() {
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            
+            if (!username || !password) {
+                alert('Please enter username and password');
+                return;
+            }
+            
+            fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    currentUser = data.user;
+                    document.getElementById('loginOverlay').style.display = 'none';
+                    document.getElementById('appContent').style.display = 'block';
+                    document.getElementById('currentUserName').textContent = data.user.name;
+                    
+                    if (data.user.role === 'admin') {
+                        document.body.classList.add('admin-mode');
+                        document.getElementById('adminMenuBtn').style.display = 'block';
+                    } else {
+                        document.body.classList.remove('admin-mode');
+                        document.getElementById('adminMenuBtn').style.display = 'none';
+                    }
+                    
+                    loadStats();
+                } else {
+                    alert(data.error || 'Invalid credentials');
+                }
+            })
+            .catch(e => {
+                alert('Login failed: ' + e.message);
+            });
+        }
+        
+        function doLogout() {
+            currentUser = null;
+            document.getElementById('loginOverlay').style.display = 'flex';
+            document.getElementById('appContent').style.display = 'none';
+            document.getElementById('loginUsername').value = '';
+            document.getElementById('loginPassword').value = '';
+        }
+        
+        function checkAuth() {
+            return currentUser;
+        }
+        
+        document.getElementById('loginPassword').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') doLogin();
+        });
     </script>
 </body>
 </html>
@@ -1397,6 +1499,26 @@ const server = http.createServer((req, res) => {
             req.on('end', () => {
                 try {
                     const vote = JSON.parse(body);
+                    
+                    if (!vote.userId) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'User not authenticated' }));
+                        return;
+                    }
+                    
+                    const pollKey = 'political_' + vote.role + '_' + vote.country;
+                    const alreadyVoted = data.votes.some(v => 
+                        v.userId === vote.userId && 
+                        v.role === vote.role && 
+                        v.country === vote.country
+                    );
+                    
+                    if (alreadyVoted) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'You have already voted in this election' }));
+                        return;
+                    }
+                    
                     vote.id = generateId();
                     vote.timestamp = new Date().toISOString();
                     vote.choices = [{ candidateName: vote.candidateName, role: vote.role }];
@@ -1411,10 +1533,15 @@ const server = http.createServer((req, res) => {
             return;
         }
         
-        // My votes
+        // My votes (by userId)
         if (path === 'my-votes' && req.method === 'GET') {
+            const userId = url.searchParams.get('userId');
+            let userVotes = data.pollVotes;
+            if (userId) {
+                userVotes = userVotes.filter(v => v.userId === userId);
+            }
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(data.pollVotes));
+            res.end(JSON.stringify(userVotes));
             return;
         }
         
@@ -1431,10 +1558,16 @@ const server = http.createServer((req, res) => {
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
                 try {
-                    const { voterName, pollId, optionId, optionText } = JSON.parse(body);
+                    const { userId, userName, pollId, optionId, optionText } = JSON.parse(body);
                     
-                    // Check if already voted
-                    const alreadyVoted = data.pollVotes.some(v => v.pollId === pollId && v.voterName === voterName);
+                    if (!userId) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'User not authenticated' }));
+                        return;
+                    }
+                    
+                    // Check if already voted by userId
+                    const alreadyVoted = data.pollVotes.some(v => v.pollId === pollId && v.userId === userId);
                     if (alreadyVoted) {
                         res.writeHead(400, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ error: 'You have already voted in this poll' }));
@@ -1444,7 +1577,8 @@ const server = http.createServer((req, res) => {
                     data.pollVotes.push({
                         id: generateId(),
                         pollId,
-                        voterName,
+                        userId,
+                        userName,
                         optionId,
                         optionText,
                         timestamp: new Date().toISOString()
@@ -1576,6 +1710,84 @@ const server = http.createServer((req, res) => {
                 pollVotes: data.pollVotes,
                 exportDate: new Date().toISOString()
             }));
+            return;
+        }
+        
+        // Login
+        if (path === 'login' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const { username, password } = JSON.parse(body);
+                    const user = data.users.find(u => u.username === username && u.password === password);
+                    if (user) {
+                        const { password, ...safeUser } = user;
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ success: true, user: safeUser }));
+                    } else {
+                        res.writeHead(401, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ success: false, error: 'Invalid credentials' }));
+                    }
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+            });
+            return;
+        }
+        
+        // Register
+        if (path === 'register' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const { username, password, name } = JSON.parse(body);
+                    if (data.users.find(u => u.username === username)) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Username already exists' }));
+                        return;
+                    }
+                    const newUser = {
+                        id: generateId(),
+                        username,
+                        password,
+                        name: name || username,
+                        role: 'user',
+                        createdAt: new Date().toISOString()
+                    };
+                    data.users.push(newUser);
+                    saveUsers();
+                    const { password: pwd, ...safeUser } = newUser;
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true, user: safeUser }));
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+            });
+            return;
+        }
+        
+        // Get current user info
+        if (path === 'current-user' && req.method === 'GET') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ message: 'Use login endpoint' }));
+            return;
+        }
+        
+        // Logo
+        if (path === 'logo' && req.method === 'GET') {
+            const logoPath = '/Users/raymondturing/Desktop/img_7645.jpeg';
+            try {
+                const logoData = fs.readFileSync(logoPath);
+                res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+                res.end(logoData);
+            } catch (e) {
+                res.writeHead(404);
+                res.end('Logo not found: ' + e.message);
+            }
             return;
         }
         

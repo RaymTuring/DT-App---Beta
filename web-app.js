@@ -10,6 +10,7 @@ let data = {
     candidates: [],
     votes: [],
     polls: [],
+    pollVotes: [],
     countries: [],
     states: [],
     cities: []
@@ -138,6 +139,8 @@ const html = `
         
         .action-buttons { display: flex; gap: 8px; margin-top: 10px; }
         
+        .datalist-input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+        
         @media (max-width: 768px) {
             .sidebar { width: 100%; height: auto; position: relative; }
             .main { margin-left: 0; }
@@ -213,13 +216,13 @@ const html = `
                 
                 <div class="form-group">
                     <label>State * (type to search)</label>
-                    <input type="text" id="stateInput" placeholder="Type state name..." list="statesList" oninput="filterCities()">
+                    <input type="text" id="stateInput" placeholder="Type state name..." list="statesList" oninput="onStateInput()">
                     <datalist id="statesList"></datalist>
                 </div>
                 
                 <div class="form-group">
                     <label>City (Optional)</label>
-                    <select id="citySelect">
+                    <select id="citySelect" onchange="onCityChange()">
                         <option value="">Select City</option>
                     </select>
                 </div>
@@ -301,7 +304,7 @@ const html = `
                         <input type="text" id="newCandidateParty" placeholder="Party *">
                     </div>
                     <div class="form-group">
-                        <select id="newCandidateCountry">
+                        <select id="newCandidateCountry" onchange="loadAdminStates()">
                             <option value="">Select Country</option>
                         </select>
                     </div>
@@ -328,9 +331,14 @@ const html = `
             <div class="card">
                 <h3>👥 Manage Candidates</h3>
                 <div class="search-box">
-                    <input type="text" id="adminCandidateSearch" placeholder="Search candidates to remove..." oninput="loadAdminCandidates()">
+                    <input type="text" id="adminCandidateSearch" placeholder="Search candidates..." oninput="loadAdminCandidates()">
                 </div>
                 <div id="adminCandidatesList"></div>
+            </div>
+            
+            <div class="card">
+                <h3>📝 Manage Polls</h3>
+                <div id="adminPollsList"></div>
             </div>
             
             <div class="card">
@@ -345,6 +353,7 @@ const html = `
     
     <script>
         let countriesData = [];
+        let currentState = '';
         
         function showSection(id) {
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -353,6 +362,7 @@ const html = `
             event.target.classList.add('active');
             
             if (id === 'home') loadStats();
+            if (id === 'vote') loadVoteForm();
             if (id === 'results') loadResults();
             if (id === 'candidates') loadCandidatesList();
             if (id === 'polls') loadPolls();
@@ -360,49 +370,60 @@ const html = `
         }
         
         async function api(path, method = 'GET', body = null) {
-            const options = { method, headers: { 'Content-Type': 'application/json' } };
-            if (body) options.body = JSON.stringify(body);
-            const res = await fetch('/api' + path, options);
-            return res.json();
+            try {
+                const options = { method, headers: { 'Content-Type': 'application/json' } };
+                if (body) options.body = JSON.stringify(body);
+                const res = await fetch('/api' + path, options);
+                return res.json();
+            } catch (e) {
+                console.error('API Error:', e);
+                alert('Error: ' + e.message);
+                return null;
+            }
         }
         
         async function loadStats() {
             const stats = await api('/stats');
+            if (!stats) return;
             document.getElementById('totalVotes').textContent = stats.votes;
             document.getElementById('totalCandidates').textContent = stats.candidates;
             document.getElementById('totalCountries').textContent = stats.countries;
             document.getElementById('totalPolls').textContent = stats.polls;
             
-            // Load countries
+            // Load countries for vote form
             countriesData = await api('/countries');
+            if (!countriesData) return;
+            
             const select = document.getElementById('countrySelect');
             select.innerHTML = '<option value="">Select Country</option>';
             countriesData.forEach(c => {
                 select.innerHTML += '<option value="' + c.name + '">' + c.name + '</option>';
             });
-            
-            // Also load for admin
-            const adminSelect = document.getElementById('newCandidateCountry');
-            if (adminSelect) {
-                adminSelect.innerHTML = '<option value="">Select Country</option>';
-                countriesData.forEach(c => {
-                    adminSelect.innerHTML += '<option value="' + c.name + '">' + c.name + '</option>';
-                });
-            }
+        }
+        
+        async function loadVoteForm() {
+            await loadStats();
+            // Reset form
+            document.getElementById('voterName').value = '';
+            document.getElementById('countrySelect').value = '';
+            document.getElementById('stateInput').value = '';
+            document.getElementById('citySelect').innerHTML = '<option value="">Select City</option>';
+            document.getElementById('roleSelect').value = '';
+            document.getElementById('candidatesList').innerHTML = '';
         }
         
         async function onCountryChange() {
             const country = document.getElementById('countrySelect').value;
-            const stateInput = document.getElementById('stateInput');
-            const citySelect = document.getElementById('citySelect');
-            
-            stateInput.value = '';
-            citySelect.innerHTML = '<option value="">Select City</option>';
+            document.getElementById('stateInput').value = '';
+            document.getElementById('citySelect').innerHTML = '<option value="">Select City</option>';
+            document.getElementById('candidatesList').innerHTML = '';
             
             if (!country) return;
             
             // Load states for this country
             const states = await api('/states?country=' + encodeURIComponent(country));
+            if (!states) return;
+            
             const dataList = document.getElementById('statesList');
             dataList.innerHTML = '';
             states.forEach(s => {
@@ -410,18 +431,27 @@ const html = `
             });
         }
         
-        async function filterCities() {
+        async function onStateInput() {
             const country = document.getElementById('countrySelect').value;
             const state = document.getElementById('stateInput').value;
             const citySelect = document.getElementById('citySelect');
             
             if (!country || !state) return;
             
+            currentState = state;
+            
+            // Load cities for this state
             const cities = await api('/cities?country=' + encodeURIComponent(country) + '&state=' + encodeURIComponent(state));
+            if (!cities) return;
+            
             citySelect.innerHTML = '<option value="">Select City</option>';
             cities.forEach(c => {
                 citySelect.innerHTML += '<option value="' + c.name + '">' + c.name + '</option>';
             });
+        }
+        
+        function onCityChange() {
+            // Optional - can trigger candidate reload if needed
         }
         
         async function loadCandidates() {
@@ -430,22 +460,27 @@ const html = `
             const role = document.getElementById('roleSelect').value;
             
             if (!country || !state || !role) {
-                document.getElementById('candidatesList').innerHTML = '';
+                document.getElementById('candidatesList').innerHTML = '<p style="color:#666;">Select country, state and position to see candidates</p>';
                 return;
             }
             
             const candidates = await api('/candidates?country=' + encodeURIComponent(country) + '&state=' + encodeURIComponent(state) + '&role=' + encodeURIComponent(role));
+            if (!candidates) return;
             
-            let html = '<label>Select Candidate</label>';
-            candidates.forEach(c => {
-                html += '<div class="candidate-row" onclick="selectCandidate(\\'' + c.id + '\\', \\'' + c.name.replace(/'/g, "\\\\'") + '\\')">';
-                html += '<input type="radio" name="candidate" value="' + c.id + '" data-name="' + c.name + '">';
-                html += '<div class="candidate-info">';
-                html += '<div class="candidate-name">' + c.name + '</div>';
-                html += '<div class="candidate-party">' + c.party + '</div>';
-                html += '</div></div>';
-            });
-            document.getElementById('candidatesList').innerHTML = html || '<p>No candidates found</p>';
+            let html = '<label>Candidates for ' + role + '</label>';
+            if (candidates.length === 0) {
+                html += '<p style="color:#666;padding:20px;">No candidates found for this selection. Try a different state or position.</p>';
+            } else {
+                candidates.forEach(c => {
+                    html += '<div class="candidate-row" onclick="selectCandidate(\\'' + c.id + '\\', \\'' + c.name.replace(/'/g, "\\\\'") + '\\')">';
+                    html += '<input type="radio" name="candidate" value="' + c.id + '" data-name="' + c.name + '">';
+                    html += '<div class="candidate-info">';
+                    html += '<div class="candidate-name">' + c.name + '</div>';
+                    html += '<div class="candidate-party">' + c.party + '</div>';
+                    html += '</div></div>';
+                });
+            }
+            document.getElementById('candidatesList').innerHTML = html;
         }
         
         let selectedCandidateId = null;
@@ -466,8 +501,13 @@ const html = `
             const city = document.getElementById('citySelect').value;
             const role = document.getElementById('roleSelect').value;
             
-            if (!voterName || !country || !state || !role || !selectedCandidateId) {
-                alert('Please fill in all required fields (name, country, state, position) and select a candidate');
+            if (!voterName || !country || !state || !role) {
+                alert('Please fill in: Name, Country, State, and Position');
+                return;
+            }
+            
+            if (!selectedCandidateId) {
+                alert('Please select a candidate');
                 return;
             }
             
@@ -481,21 +521,16 @@ const html = `
                 candidateName: selectedCandidateName
             });
             
-            alert('Vote submitted successfully!');
-            document.getElementById('voterName').value = '';
-            document.getElementById('countrySelect').value = '';
-            document.getElementById('stateInput').value = '';
-            document.getElementById('citySelect').innerHTML = '<option value="">Select City</option>';
-            document.getElementById('roleSelect').value = '';
-            document.getElementById('candidatesList').innerHTML = '';
-            selectedCandidateId = null;
-            selectedCandidateName = null;
-            showSection('home');
+            if (result && result.success) {
+                alert('Vote submitted successfully!');
+                showSection('home');
+            }
         }
         
         async function loadResults() {
             const votes = await api('/votes');
             const candidates = await api('/all-candidates');
+            if (!votes || !candidates) return;
             
             const stats = {};
             votes.forEach(v => {
@@ -507,22 +542,26 @@ const html = `
             const total = votes.length;
             let html = '<table><tr><th>Candidate</th><th>Party</th><th>Position</th><th>Votes</th><th>%</th></tr>';
             
-            Object.entries(stats).sort((a,b) => b[1] - a[1]).forEach(([name, count]) => {
-                const cand = candidates.find(c => c.name === name);
-                const party = cand ? cand.party : '-';
-                const role = cand ? cand.role : '-';
-                const percent = total > 0 ? (count / total * 100).toFixed(1) : 0;
-                html += '<tr><td>' + name + '</td><td>' + party + '</td><td>' + role + '</td><td>' + count + '</td><td>' + percent + '%</td></tr>';
-            });
+            if (Object.keys(stats).length === 0) {
+                html = '<p>No votes yet. Be the first to vote!</p>';
+            } else {
+                Object.entries(stats).sort((a,b) => b[1] - a[1]).forEach(([name, count]) => {
+                    const cand = candidates.find(c => c.name === name);
+                    const party = cand ? cand.party : '-';
+                    const role = cand ? cand.role : '-';
+                    const percent = total > 0 ? (count / total * 100).toFixed(1) : 0;
+                    html += '<tr><td>' + name + '</td><td>' + party + '</td><td>' + role + '</td><td>' + count + '</td><td>' + percent + '%</td></tr>';
+                });
+            }
             
             html += '</table>';
-            if (Object.keys(stats).length === 0) html = '<p>No votes yet</p>';
             document.getElementById('resultsTable').innerHTML = html;
         }
         
         async function loadCandidatesList() {
             const search = document.getElementById('candidateSearch').value;
             const candidates = await api('/all-candidates');
+            if (!candidates) return;
             
             const filtered = search ? candidates.filter(c => 
                 c.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -530,6 +569,11 @@ const html = `
                 c.country.toLowerCase().includes(search.toLowerCase()) ||
                 c.state.toLowerCase().includes(search.toLowerCase())
             ) : candidates;
+            
+            if (filtered.length === 0) {
+                document.getElementById('candidatesTable').innerHTML = '<p>No candidates found</p>';
+                return;
+            }
             
             let html = '<table><tr><th>Name</th><th>Party</th><th>Position</th><th>Country</th><th>State</th></tr>';
             filtered.forEach(c => {
@@ -545,15 +589,20 @@ const html = `
         
         async function loadPolls() {
             const polls = await api('/polls');
+            if (!polls) return;
+            
             let html = '';
-            polls.forEach(p => {
-                html += '<div class="poll-card">';
-                html += '<div class="poll-header"><h4>' + p.title + '</h4><span class="share-code">' + p.shareCode + '</span></div>';
-                if (p.description) html += '<p>' + p.description + '</p>';
-                html += '<p>' + p.options.length + ' options | ' + p.votes + ' votes</p>';
-                html += '</div>';
-            });
-            html = html || '<p>No polls yet.</p>';
+            if (polls.length === 0) {
+                html = '<div class="card"><p>No polls yet. Create one!</p></div>';
+            } else {
+                polls.forEach(p => {
+                    html += '<div class="poll-card">';
+                    html += '<div class="poll-header"><h4>' + p.title + '</h4><span class="share-code">' + p.shareCode + '</span></div>';
+                    if (p.description) html += '<p>' + p.description + '</p>';
+                    html += '<p>' + p.options.length + ' options | ' + p.votes + ' votes</p>';
+                    html += '</div>';
+                });
+            }
             document.getElementById('pollsList').innerHTML = html;
         }
         
@@ -565,15 +614,18 @@ const html = `
             if (!options) return;
             
             const optionList = options.split(',').map(o => ({ id: generateId(), text: o.trim(), votes: 0 }));
-            await api('/polls', 'POST', { 
+            const result = await api('/polls', 'POST', { 
                 title, 
                 description, 
                 options: optionList, 
                 shareCode: generateShareCode(),
                 createdBy: 'User'
             });
-            alert('Poll created!');
-            loadPolls();
+            
+            if (result && result.success) {
+                alert('Poll created successfully!');
+                loadPolls();
+            }
         }
         
         function generateId() {
@@ -600,21 +652,52 @@ const html = `
         
         async function loadAdmin() {
             const stats = await api('/stats');
+            if (!stats) return;
             document.getElementById('adminCandidates').textContent = stats.candidates;
             document.getElementById('adminVotes').textContent = stats.votes;
             document.getElementById('adminPolls').textContent = stats.polls;
+            
+            // Load countries for admin
+            const countries = await api('/countries');
+            if (!countries) return;
+            
+            const adminSelect = document.getElementById('newCandidateCountry');
+            if (adminSelect) {
+                adminSelect.innerHTML = '<option value="">Select Country</option>';
+                countries.forEach(c => {
+                    adminSelect.innerHTML += '<option value="' + c.name + '">' + c.name + '</option>';
+                });
+            }
+            
             loadAdminCandidates();
+            loadAdminPolls();
+        }
+        
+        async function loadAdminStates() {
+            const country = document.getElementById('newCandidateCountry').value;
+            if (!country) return;
+            
+            const states = await api('/states?country=' + encodeURIComponent(country));
+            if (!states) return;
+            
+            document.getElementById('newCandidateState').placeholder = states.length > 0 ? 'Type state name...' : 'No states available';
         }
         
         async function loadAdminCandidates() {
             const search = document.getElementById('adminCandidateSearch').value;
             let candidates = await api('/all-candidates');
+            if (!candidates) return;
             
             if (search) {
                 candidates = candidates.filter(c => 
                     c.name.toLowerCase().includes(search.toLowerCase()) ||
                     c.party.toLowerCase().includes(search.toLowerCase())
                 );
+            }
+            
+            if (candidates.length === 0) {
+                document.getElementById('adminCandidatesList').innerHTML = '<p>No candidates found</p>';
+                return;
             }
             
             let html = '<table><tr><th>Name</th><th>Party</th><th>Position</th><th>Location</th><th>Action</th></tr>';
@@ -624,6 +707,24 @@ const html = `
             });
             html += '</table>';
             document.getElementById('adminCandidatesList').innerHTML = html;
+        }
+        
+        async function loadAdminPolls() {
+            const polls = await api('/polls');
+            if (!polls) return;
+            
+            if (polls.length === 0) {
+                document.getElementById('adminPollsList').innerHTML = '<p>No polls</p>';
+                return;
+            }
+            
+            let html = '<table><tr><th>Title</th><th>Code</th><th>Votes</th><th>Action</th></tr>';
+            polls.forEach(p => {
+                html += '<tr><td>' + p.title + '</td><td>' + p.shareCode + '</td><td>' + p.votes + '</td>';
+                html += '<td><button class="btn btn-danger btn-small" onclick="removePoll(\\'' + p.id + '\\')">Delete</button></td></tr>';
+            });
+            html += '</table>';
+            document.getElementById('adminPollsList').innerHTML = html;
         }
         
         async function addCandidate() {
@@ -639,7 +740,7 @@ const html = `
                 return;
             }
             
-            await api('/candidates', 'POST', { 
+            const result = await api('/candidates', 'POST', { 
                 name, 
                 party, 
                 country: country || 'Unknown',
@@ -648,31 +749,50 @@ const html = `
                 role 
             });
             
-            alert('Candidate added!');
-            document.getElementById('newCandidateName').value = '';
-            document.getElementById('newCandidateParty').value = '';
-            loadAdminCandidates();
-            loadStats();
+            if (result && result.success) {
+                alert('Candidate added successfully!');
+                document.getElementById('newCandidateName').value = '';
+                document.getElementById('newCandidateParty').value = '';
+                loadAdminCandidates();
+                loadAdmin();
+            }
         }
         
         async function removeCandidate(id) {
-            if (!confirm('Are you sure you want to remove this candidate?')) return;
+            if (!confirm('Remove this candidate?')) return;
             
-            await api('/candidates/' + id, 'DELETE');
-            alert('Candidate removed!');
-            loadAdminCandidates();
-            loadStats();
+            const result = await api('/candidates/' + id, 'DELETE');
+            if (result && result.success) {
+                alert('Candidate removed!');
+                loadAdminCandidates();
+                loadAdmin();
+            }
+        }
+        
+        async function removePoll(id) {
+            if (!confirm('Delete this poll?')) return;
+            
+            const result = await api('/polls/' + id, 'DELETE');
+            if (result && result.success) {
+                alert('Poll deleted!');
+                loadAdminPolls();
+                loadAdmin();
+            }
         }
         
         async function clearVotes() {
-            if (!confirm('Are you sure you want to clear ALL votes? This cannot be undone.')) return;
-            await api('/votes', 'DELETE');
-            alert('All votes cleared!');
-            loadAdmin();
+            if (!confirm('Delete ALL votes? This cannot be undone!')) return;
+            const result = await api('/votes', 'DELETE');
+            if (result && result.success) {
+                alert('All votes cleared!');
+                loadAdmin();
+            }
         }
         
         async function exportData() {
             const data = await api('/export');
+            if (!data) return;
+            
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -681,6 +801,7 @@ const html = `
             a.click();
         }
         
+        // Initialize
         loadStats();
     </script>
 </body>
@@ -691,8 +812,7 @@ const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     
     if (url.pathname.startsWith('/api/')) {
-        const path = url.pathname.slice(5);  // Remove '/api/' prefix
-        const pathParts = path.split('/');
+        const path = url.pathname.slice(5);
         
         // Stats
         if (path === 'stats' && req.method === 'GET') {
@@ -716,9 +836,15 @@ const server = http.createServer((req, res) => {
         // States
         if (path === 'states' && req.method === 'GET') {
             const country = url.searchParams.get('country');
-            const states = data.states.filter(s => s.countryName.toLowerCase() === country.toLowerCase());
+            if (!country) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify([]));
+                return;
+            }
+            const states = data.states.filter(s => s.country_name && s.country_name.toLowerCase() === country.toLowerCase());
+            const uniqueStates = [...new Set(states.map(s => s.name))];
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify([...new Set(states.map(s => s.name))].map(name => ({ name }))));
+            res.end(JSON.stringify(uniqueStates.map(name => ({ name }))));
             return;
         }
         
@@ -726,12 +852,18 @@ const server = http.createServer((req, res) => {
         if (path === 'cities' && req.method === 'GET') {
             const country = url.searchParams.get('country');
             const state = url.searchParams.get('state');
+            if (!country || !state) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify([]));
+                return;
+            }
             const cities = data.cities.filter(c => 
-                c.countryName.toLowerCase() === country.toLowerCase() && 
-                c.stateName.toLowerCase() === state.toLowerCase()
+                c.country_name && c.country_name.toLowerCase() === country.toLowerCase() && 
+                c.state_name && c.state_name.toLowerCase() === state.toLowerCase()
             );
+            const uniqueCities = [...new Set(cities.map(c => c.name))];
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify([...new Set(cities.map(c => c.name))].map(name => ({ name }))));
+            res.end(JSON.stringify(uniqueCities.map(name => ({ name }))));
             return;
         }
         
@@ -741,8 +873,8 @@ const server = http.createServer((req, res) => {
             const state = url.searchParams.get('state');
             const role = url.searchParams.get('role');
             let candidates = data.candidates;
-            if (country) candidates = candidates.filter(c => c.country.toLowerCase() === country.toLowerCase());
-            if (state) candidates = candidates.filter(c => c.state.toLowerCase() === state.toLowerCase());
+            if (country) candidates = candidates.filter(c => c.country && c.country.toLowerCase() === country.toLowerCase());
+            if (state) candidates = candidates.filter(c => c.state && c.state.toLowerCase() === state.toLowerCase());
             if (role) candidates = candidates.filter(c => c.role === role);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(candidates));
@@ -768,13 +900,18 @@ const server = http.createServer((req, res) => {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
-                const vote = JSON.parse(body);
-                vote.id = generateId();
-                vote.timestamp = new Date().toISOString();
-                vote.choices = [{ candidateName: vote.candidateName, role: vote.role }];
-                data.votes.push(vote);
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: true }));
+                try {
+                    const vote = JSON.parse(body);
+                    vote.id = generateId();
+                    vote.timestamp = new Date().toISOString();
+                    vote.choices = [{ candidateName: vote.candidateName, role: vote.role }];
+                    data.votes.push(vote);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true }));
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
             });
             return;
         }
@@ -791,7 +928,7 @@ const server = http.createServer((req, res) => {
         if (path === 'polls' && req.method === 'GET') {
             const polls = data.polls.map(p => ({ 
                 ...p, 
-                votes: data.pollVotes ? data.pollVotes.filter(pv => pv.pollId === p.id).length : 0 
+                votes: data.pollVotes.filter(pv => pv.pollId === p.id).length 
             }));
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(polls));
@@ -803,14 +940,28 @@ const server = http.createServer((req, res) => {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
-                const poll = JSON.parse(body);
-                poll.id = generateId();
-                poll.createdAt = new Date().toISOString();
-                if (!data.pollVotes) data.pollVotes = [];
-                data.polls.push(poll);
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: true }));
+                try {
+                    const poll = JSON.parse(body);
+                    poll.id = generateId();
+                    poll.createdAt = new Date().toISOString();
+                    data.polls.push(poll);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true }));
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
             });
+            return;
+        }
+        
+        // DELETE poll
+        const pollsMatch = path.match(/^polls\/(.+)$/);
+        if (pollsMatch && req.method === 'DELETE') {
+            const id = pollsMatch[1];
+            data.polls = data.polls.filter(p => p.id !== id);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
             return;
         }
         
@@ -819,19 +970,25 @@ const server = http.createServer((req, res) => {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
-                const candidate = JSON.parse(body);
-                candidate.id = generateId();
-                data.candidates.push(candidate);
-                saveCandidates();
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: true }));
+                try {
+                    const candidate = JSON.parse(body);
+                    candidate.id = generateId();
+                    data.candidates.push(candidate);
+                    saveCandidates();
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true }));
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
             });
             return;
         }
         
         // DELETE candidate
-        if (pathParts[1] === 'candidates' && pathParts[2] && req.method === 'DELETE') {
-            const id = pathParts[2];
+        const candidatesMatch = path.match(/^candidates\/(.+)$/);
+        if (candidatesMatch && req.method === 'DELETE') {
+            const id = candidatesMatch[1];
             data.candidates = data.candidates.filter(c => c.id !== id);
             saveCandidates();
             res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -2653,7 +2653,7 @@ const server = http.createServer((req, res) => {
                     const { username, password } = JSON.parse(body);
                     const safeUsername = sanitize(username);
                     const passwordHash = hashPassword(password);
-                    const user = data.users.find(u => u.username === safeUsername && u.passwordHash === passwordHash);
+                    const user = data.users.find(u => u.username === safeUsername && (u.passwordHash === passwordHash || u.password === password));
                     if (user) {
                         const { password, passwordHash, ...safeUser } = user;
                         res.writeHead(200, { 'Content-Type': 'application/json' });

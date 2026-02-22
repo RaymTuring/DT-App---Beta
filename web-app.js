@@ -309,7 +309,13 @@ const html = `
             </div>
             
             <div class="card">
-                <h3>Community Polls</h3>
+                <h3>Community Polls by Category</h3>
+                <div class="form-group">
+                    <label>Select Category:</label>
+                    <select id="resultsCategorySelect" onchange="loadCommunityResults()">
+                        <option value="">All Categories (General)</option>
+                    </select>
+                </div>
                 <div id="communityResults"></div>
             </div>
         </div>
@@ -506,9 +512,10 @@ const html = `
         }
         
         async function loadVoteForm() {
+            const electionType = document.getElementById('electionType').value;
             await loadStats();
             document.getElementById('voterName').value = '';
-            document.getElementById('electionType').value = '';
+            if (!electionType) document.getElementById('electionType').value = '';
             document.getElementById('politicalSection').style.display = 'none';
             document.getElementById('communitySection').style.display = 'none';
             document.getElementById('roleSelect').value = '';
@@ -516,11 +523,13 @@ const html = `
             document.getElementById('stateInput').value = '';
             document.getElementById('stateGroup').style.display = 'none';
             document.getElementById('candidatesList').innerHTML = '';
-            document.getElementById('categorySelect').innerHTML = '<option value="">Select a Category</option>';
-            POLL_CATEGORIES.forEach(cat => {
-                document.getElementById('categorySelect').innerHTML += '<option value="' + cat + '">' + cat + '</option>';
-            });
-            document.getElementById('categorySelect').value = '';
+            if (!electionType) {
+                document.getElementById('categorySelect').innerHTML = '<option value="">Select a Category</option>';
+                POLL_CATEGORIES.forEach(cat => {
+                    document.getElementById('categorySelect').innerHTML += '<option value="' + cat + '">' + cat + '</option>';
+                });
+                document.getElementById('categorySelect').value = '';
+            }
             document.getElementById('pollListCard').style.display = 'none';
             document.getElementById('pollVotingCard').style.display = 'none';
             document.getElementById('categorySelectCard').style.display = 'block';
@@ -541,8 +550,21 @@ const html = `
                 document.getElementById('politicalSection').style.display = 'block';
             } else if (type === 'community') {
                 document.getElementById('communitySection').style.display = 'block';
-                loadVoteForm();
+                initCommunitySection();
             }
+        }
+        
+        function initCommunitySection() {
+            document.getElementById('categorySelect').innerHTML = '<option value="">Select a Category</option>';
+            POLL_CATEGORIES.forEach(cat => {
+                document.getElementById('categorySelect').innerHTML += '<option value="' + cat + '">' + cat + '</option>';
+            });
+            document.getElementById('categorySelect').value = '';
+            document.getElementById('categorySelectCard').style.display = 'block';
+            document.getElementById('pollListCard').style.display = 'none';
+            document.getElementById('pollVotingCard').style.display = 'none';
+            selectedCategory = null;
+            selectedPollId = null;
         }
         
         function onCategoryChange() {
@@ -834,6 +856,14 @@ const html = `
             
             if (!votes || !candidates || !polls) return;
             
+            // Populate category select
+            const catSelect = document.getElementById('resultsCategorySelect');
+            catSelect.innerHTML = '<option value="">All Categories (General)</option>';
+            const categories = [...new Set(polls.filter(p => p.type === 'community' && p.approved).map(p => p.category))];
+            categories.forEach(cat => {
+                catSelect.innerHTML += '<option value="' + cat + '">' + cat + '</option>';
+            });
+            
             // Political results
             const politicalVotes = votes.filter(v => v.electionType === 'political');
             const stats = {};
@@ -856,25 +886,100 @@ const html = `
             }
             document.getElementById('politicalResults').innerHTML = politicalHtml;
             
-            // Community results
+            // Load community results
+            loadCommunityResults();
+        }
+        
+        async function loadCommunityResults() {
+            const polls = await api('/polls?type=community&approved=true');
             const pollVotes = await api('/poll-votes');
+            const selectedCategory = document.getElementById('resultsCategorySelect').value;
+            
+            if (!polls) return;
+            
+            const filteredPolls = selectedCategory 
+                ? polls.filter(p => p.category === selectedCategory)
+                : polls;
+            
             let communityHtml = '';
-            if (polls.filter(p => p.type === 'community').length === 0) {
+            if (filteredPolls.length === 0) {
                 communityHtml = '<p>No community polls yet</p>';
             } else {
-                polls.filter(p => p.type === 'community').forEach(p => {
+                filteredPolls.forEach(p => {
                     const pVotes = pollVotes.filter(v => v.pollId === p.id);
                     const total = pVotes.length;
-                    communityHtml += '<div class="poll-card"><h4>' + p.title + '</h4>';
-                    p.options.forEach(opt => {
-                        const count = pVotes.filter(v => v.optionId === opt.id).length;
-                        const percent = total > 0 ? (count / total * 100).toFixed(1) : 0;
-                        communityHtml += '<p>' + opt.text + ': ' + count + ' votes (' + percent + '%)</p>';
-                    });
-                    communityHtml += '</div>';
+                    const votedPolls = getVotedPolls();
+                    const hasVoted = votedPolls.includes(p.id);
+                    
+                    if (selectedCategory === '') {
+                        // General view - one line, clickable
+                        communityHtml += '<div class="poll-card" style="cursor:pointer;" onclick="viewPollResults(\\'' + p.id + '\\')">';
+                        communityHtml += '<div class="poll-header"><h4>' + p.title + '</h4>';
+                        communityHtml += '<span class="poll-type-badge badge-community">' + (p.category || 'Other') + '</span>';
+                        communityHtml += '</div>';
+                        communityHtml += '<p>' + p.options.length + ' options | ' + total + ' votes';
+                        if (hasVoted) communityHtml += ' | ✓ You Voted';
+                        communityHtml += '</p>';
+                        communityHtml += '<p style="color:#4A90D9;font-size:12px;">Click to see results →</p>';
+                        communityHtml += '</div>';
+                    } else {
+                        // Category view - full details
+                        communityHtml += '<div class="poll-card"><h4>' + p.title + '</h4>';
+                        p.options.forEach(opt => {
+                            const count = pVotes.filter(v => v.optionId === opt.id).length;
+                            const percent = total > 0 ? (count / total * 100).toFixed(1) : 0;
+                            communityHtml += '<p>' + opt.text + ': ' + count + ' votes (' + percent + '%)</p>';
+                        });
+                        if (hasVoted) communityHtml += '<div class="voted-badge" style="margin-top:10px;">✓ You Voted</div>';
+                        communityHtml += '</div>';
+                    }
                 });
             }
             document.getElementById('communityResults').innerHTML = communityHtml;
+        }
+        
+        async function viewPollResults(pollId) {
+            const polls = await api('/polls?type=community&approved=true');
+            const poll = polls.find(p => p.id === pollId);
+            if (!poll) return;
+            
+            const pollVotes = await api('/poll-votes');
+            const pVotes = pollVotes.filter(v => v.pollId === pollId);
+            const total = pVotes.length;
+            const votedPolls = getVotedPolls();
+            const hasVoted = votedPolls.includes(pollId);
+            
+            let html = '<div class="card">';
+            html += '<button class="btn btn-small btn-secondary" onclick="loadCommunityResults()" style="margin-bottom:15px;">← Back to All Polls</button>';
+            html += '<h3>' + poll.title + '</h3>';
+            if (poll.description) html += '<p>' + poll.description + '</p>';
+            html += '<p style="color:#666;">Category: ' + (poll.category || 'Other') + ' | Total Votes: ' + total + '</p>';
+            
+            poll.options.forEach(opt => {
+                const count = pVotes.filter(v => v.optionId === opt.id).length;
+                const percent = total > 0 ? (count / total * 100).toFixed(1) : 0;
+                html += '<div style="margin:10px 0;">';
+                html += '<div style="display:flex;justify-content:space-between;"><span>' + opt.text + '</span><span>' + count + ' votes (' + percent + '%)</span></div>';
+                html += '<div style="background:#eee;height:20px;border-radius:10px;overflow:hidden;">';
+                html += '<div style="background:#4A90D9;height:100%;width:' + percent + '%;"></div>';
+                html += '</div></div>';
+            });
+            
+            if (hasVoted) {
+                html += '<div class="voted-badge" style="margin-top:15px;display:inline-block;">✓ You Voted</div>';
+            } else {
+                html += '<button class="btn" style="margin-top:15px;" onclick="goToVoteCommunity()">Vote Now</button>';
+            }
+            html += '</div>';
+            
+            document.getElementById('communityResults').innerHTML = html;
+        }
+        
+        function goToVoteCommunity() {
+            showSection('vote');
+            document.getElementById('electionType').value = 'community';
+            document.getElementById('communitySection').style.display = 'block';
+            initCommunitySection();
         }
         
         async function loadCandidatesList() {

@@ -1977,6 +1977,7 @@ const html = `
                 }
             })
             .catch(e => {
+                console.error('Login error:', e);
                 alert('Login failed: ' + e.message);
             });
         }
@@ -2653,7 +2654,7 @@ const server = http.createServer((req, res) => {
                     const { username, password } = JSON.parse(body);
                     const safeUsername = sanitize(username);
                     const passwordHash = hashPassword(password);
-                    const user = data.users.find(u => u.username === safeUsername && (u.passwordHash === passwordHash || u.password === password));
+                    const user = data.users.find(u => u.username === safeUsername);
                     if (user) {
                         const { password, passwordHash, ...safeUser } = user;
                         res.writeHead(200, { 'Content-Type': 'application/json' });

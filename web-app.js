@@ -349,6 +349,7 @@ const html = `
             <div class="card">
                 <p style="color:#666;">Logged in as: <strong id="voterNameDisplay" style="color:#4A90D9;"></strong></p>
                 <button class="btn" onclick="submitVote()" style="margin-top: 20px;">Submit Vote</button>
+                <div id="voteSectionExtras" style="margin-top:20px;"></div>
             </div>
         </div>
         
@@ -896,6 +897,21 @@ const html = `
             html += '<button class="btn btn-small btn-secondary" onclick="sharePoll(\\'' + poll.shareCode + '\\')">📤 Share Poll</button>';
             html += '</div>';
             
+            // Add products for this poll
+            const products = await api('/products');
+            const pollProducts = products.filter(p => p.approved && p.pollId === pollId);
+            if (pollProducts.length > 0) {
+                html += '<div style="margin-top:20px;">';
+                html += '<h4 style="margin-bottom:10px;">🎁 Available Products</h4>';
+                pollProducts.forEach(prod => {
+                    html += '<div style="padding:10px;margin:5px 0;background:#f8f8f8;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">';
+                    html += '<div><strong>' + prod.name + '</strong><br><span style="color:#28a745;font-weight:bold;">$' + prod.price + '</span></div>';
+                    html += '<button class="btn btn-small" onclick="openBuyGift(\\'' + prod.id + '\\')">🎁 Buy Gift</button>';
+                    html += '</div>';
+                });
+                html += '</div>';
+            }
+            
             document.getElementById('pollVotingOptions').innerHTML = html;
         }
         
@@ -1124,43 +1140,75 @@ const html = `
             const candleData = await api('/candle-history?pollId=' + pollId);
             
             if (!candleData || !candleData.history || candleData.history.length === 0) {
-                return '<div class="card" style="margin-top:20px;"><h4>📊 Vote Trend (Top 2)</h4><p style="color:#666;">More votes needed to generate chart</p></div>';
+                return '';
             }
             
             const { option1, option2, history } = candleData;
-            let html = '<div class="card" style="margin-top:20px;">';
-            html += '<h4>📊 Vote Trend: ' + option1.text + ' vs ' + option2.text + '</h4>';
+            let html = '<div class="card" style="margin-top:20px;background:#1a1a2e;color:white;">';
+            html += '<h4 style="color:white;">📈 Vote Trend: ' + option1.text + ' vs ' + option2.text + '</h4>';
+            html += '<p style="color:#888;font-size:12px;">Winner goes UP, Loser goes DOWN (Forex style)</p>';
+            
+            // Draw the main chart
+            const height = 150;
+            const width = 600;
+            
+            html += '<div style="margin-top:15px;overflow-x:auto;">';
+            html += '<svg width="' + width + '" height="' + (height + 40) + '" style="background:#0f0f1e;border-radius:8px;">';
+            
+            // Draw center line (50%)
+            html += '<line x1="0" y1="' + (height/2) + '" x2="' + width + '" y2="' + (height/2) + '" stroke="#333" stroke-width="1" stroke-dasharray="5,5"/>';
+            html += '<text x="5" y="' + (height/2 - 5) + '" fill="#666" font-size="10">50%</text>';
+            
+            // Draw candles
+            const candleWidth = Math.max(10, (width - 40) / history.length);
             
             history.forEach((candle, idx) => {
-                const maxVotes = Math.max(candle.high1, candle.high2, 10);
-                const scale = 100 / maxVotes;
+                const x = 20 + idx * candleWidth;
+                const centerY = height / 2;
                 
-                const c1Color = candle.close1 >= candle.open1 ? '#28a745' : '#dc3545';
-                const c2Color = candle.close2 >= candle.open2 ? '#28a745' : '#dc3545';
+                // Calculate position: 50% = center, 100% = top (winner), 0% = bottom (loser)
+                const pct = candle.closePct / 100;
+                const y = centerY - ((pct - 0.5) * height);
                 
-                html += '<div style="margin:15px 0;padding:10px;background:#f8f8f8;border-radius:8px;">';
-                html += '<p style="font-size:11px;color:#888;">Update ' + (idx + 1) + '</p>';
-                html += '<div style="display:flex;align-items:flex-end;height:80px;gap:20px;">';
+                // Color based on direction
+                const color = candle.closePct >= 50 ? '#00ff88' : '#ff4444';
+                const prevPct = candle.openPct / 100;
+                const prevY = centerY - ((prevPct - 0.5) * height);
                 
-                // Option 1 bar
-                html += '<div style="flex:1;text-align:center;">';
-                html += '<div style="background:' + c1Color + ';width:40px;margin:0 auto;height:' + (candle.close1 * scale) + 'px;position:relative;">';
-                html += '<div style="position:absolute;top:-20px;width:100%;text-align:center;font-size:11px;">' + candle.close1 + '</div>';
-                html += '</div>';
-                html += '<p style="font-size:11px;margin-top:5px;">' + option1.text + '</p>';
-                html += '</div>';
+                // Draw wick
+                html += '<line x1="' + (x + candleWidth/2) + '" y1="' + prevY + '" x2="' + (x + candleWidth/2) + '" y2="' + y + '" stroke="' + color + '" stroke-width="2"/>';
                 
-                // Option 2 bar
-                html += '<div style="flex:1;text-align:center;">';
-                html += '<div style="background:' + c2Color + ';width:40px;margin:0 auto;height:' + (candle.close2 * scale) + 'px;position:relative;">';
-                html += '<div style="position:absolute;top:-20px;width:100%;text-align:center;font-size:11px;">' + candle.close2 + '</div>';
-                html += '</div>';
-                html += '<p style="font-size:11px;margin-top:5px;">' + option2.text + '</p>';
-                html += '</div>';
+                // Draw candle body
+                const bodyHeight = Math.max(4, Math.abs(y - prevY));
+                const bodyY = Math.min(y, prevY);
+                html += '<rect x="' + x + '" y="' + bodyY + '" width="' + (candleWidth - 4) + '" height="' + bodyHeight + '" fill="' + color + '" rx="2"/>';
                 
-                html += '</div>';
+                // Vote count
+                if (idx === history.length - 1) {
+                    html += '<text x="' + (x + candleWidth/2) + '" y="' + (height + 15) + '" fill="' + color + '" font-size="10" text-anchor="middle">' + candle.votes1 + '/' + candle.votes2 + '</text>';
+                }
+            });
+            
+            // Labels
+            html += '<text x="10" y="15" fill="#00ff88" font-size="11">' + option1.text + '</text>';
+            html += '<text x="10" y="30" fill="#888" font-size="10">(' + history[history.length-1].votes1 + ' votes)</text>';
+            html += '<text x="10" y="' + (height - 5) + '" fill="#ff4444" font-size="11">' + option2.text + '</text>';
+            html += '<text x="10" y="' + (height + 15) + '" fill="#888" font-size="10">(' + history[history.length-1].votes2 + ' votes)</text>';
+            
+            html += '</svg>';
+            html += '</div>';
+            
+            // Show all updates
+            html += '<div style="margin-top:15px;">';
+            html += '<p style="color:#888;font-size:11;">Vote History:</p>';
+            history.forEach((candle, idx) => {
+                const color = candle.closePct >= 50 ? '#00ff88' : '#ff4444';
+                html += '<div style="display:inline-block;margin:3px;padding:5px 10px;background:#333;border-radius:4px;font-size:11;">';
+                html += '<span style="color:' + color + ';">' + candle.votes1 + '/' + candle.votes2 + '</span>';
+                html += ' (' + candle.total + ' total)';
                 html += '</div>';
             });
+            html += '</div>';
             
             html += '</div>';
             return html;
@@ -1985,47 +2033,56 @@ const server = http.createServer((req, res) => {
             const poll = data.polls.find(p => p.id === pollId);
             if (!poll || !poll.options || poll.options.length < 2) return;
             
+            const totalVotes = pollVotes.length;
+            if (totalVotes === 0) return;
+            
             const votesByOption = {};
             poll.options.forEach(opt => {
                 votesByOption[opt.id] = pollVotes.filter(v => v.optionId === opt.id).length;
             });
             
             const sortedOptions = poll.options.slice().sort((a, b) => votesByOption[b.id] - votesByOption[a.id]);
-            const top1 = sortedOptions[0] ? sortedOptions[0].id : null;
-            const top2 = sortedOptions[1] ? sortedOptions[1].id : null;
+            const top1 = sortedOptions[0];
+            const top2 = sortedOptions[1];
             
             if (!top1 || !top2) return;
             
-            const key = pollId + '_' + top1 + '_' + top2;
-            const reverseKey = pollId + '_' + top2 + '_' + top1;
-            
+            // Use option IDs as key
+            const key = pollId + '_' + top1.id + '_' + top2.id;
             let history = data.candleHistory[key] || [];
+            
             const now = new Date().toISOString();
-            const currentVotes1 = votesByOption[top1];
-            const currentVotes2 = votesByOption[top2];
+            const currentVotes1 = votesByOption[top1.id];
+            const currentVotes2 = votesByOption[top2.id];
+            
+            // Calculate percentage (50 = center, 100 = top1 winner, 0 = top2 winner)
+            const pct1 = totalVotes > 0 ? (currentVotes1 / totalVotes * 100) : 50;
+            const pct2 = 100 - pct1;
             
             if (history.length > 0) {
                 const last = history[history.length - 1];
-                if (last.close1 !== currentVotes1 || last.close2 !== currentVotes2) {
+                if (Math.abs(last.closePct - pct1) > 0.1) {
                     history.push({
                         timestamp: now,
-                        open1: last.close1,
-                        open2: last.close2,
-                        close1: currentVotes1,
-                        close2: currentVotes2,
-                        high1: Math.max(last.high1, currentVotes1),
-                        high2: Math.max(last.high2, currentVotes2),
-                        low1: Math.min(last.low1, currentVotes1),
-                        low2: Math.min(last.low2, currentVotes2)
+                        openPct: last.closePct,
+                        closePct: pct1,
+                        highPct: Math.max(last.highPct, pct1, pct2),
+                        lowPct: Math.min(last.lowPct, pct1, pct2),
+                        votes1: currentVotes1,
+                        votes2: currentVotes2,
+                        total: totalVotes
                     });
                 }
             } else {
                 history.push({
                     timestamp: now,
-                    open1: 0, open2: 0,
-                    close1: currentVotes1, close2: currentVotes2,
-                    high1: currentVotes1, high2: currentVotes2,
-                    low1: currentVotes1, low2: currentVotes2
+                    openPct: 50,
+                    closePct: pct1,
+                    highPct: Math.max(pct1, pct2),
+                    lowPct: Math.min(pct1, pct2),
+                    votes1: currentVotes1,
+                    votes2: currentVotes2,
+                    total: totalVotes
                 });
             }
             

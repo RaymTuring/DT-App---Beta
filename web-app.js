@@ -2,19 +2,9 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 
 const PORT = 18792;
 const DATA_DIR = '/Users/raymondturing/Documents/Data-Toalha';
-
-function sanitize(str) {
-    if (typeof str !== 'string') return '';
-    return str.replace(/[<>'";&]/g, '').substring(0, 1000);
-}
-
-function hashPassword(password) {
-    return crypto.createHash('sha256').update(password + 'DataToalhaSalt2026').digest('hex').substring(0, 64);
-}
 
 let data = {
     users: [],
@@ -87,18 +77,10 @@ function loadUsers() {
     try {
         if (fs.existsSync(usersFile)) {
             data.users = JSON.parse(fs.readFileSync(usersFile, 'utf8'));
-            let updated = false;
-            data.users.forEach(u => {
-                if (!u.passwordHash) {
-                    u.passwordHash = hashPassword(u.password);
-                    updated = true;
-                }
-            });
-            if (updated) saveUsers();
         } else {
             data.users = [
-                { id: 'admin1', username: 'admin', passwordHash: hashPassword('admin123'), role: 'admin', name: 'Administrator' },
-                { id: 'user1', username: 'user', passwordHash: hashPassword('user123'), role: 'user', name: 'Regular User' }
+                { id: 'admin1', username: 'admin', password: 'admin123', role: 'admin', name: 'Administrator' },
+                { id: 'user1', username: 'user', password: 'user123', role: 'user', name: 'Regular User' }
             ];
             fs.mkdirSync(path.dirname(usersFile), { recursive: true });
             fs.writeFileSync(usersFile, JSON.stringify(data.users, null, 2));
@@ -2652,11 +2634,9 @@ const server = http.createServer((req, res) => {
             req.on('end', () => {
                 try {
                     const { username, password } = JSON.parse(body);
-                    const safeUsername = sanitize(username);
-                    const passwordHash = hashPassword(password);
-                    const user = data.users.find(u => u.username === safeUsername);
+                    const user = data.users.find(u => u.username === username && u.password === password);
                     if (user) {
-                        const { password, passwordHash, ...safeUser } = user;
+                        const { password, ...safeUser } = user;
                         res.writeHead(200, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ success: true, user: safeUser }));
                     } else {
@@ -2678,23 +2658,22 @@ const server = http.createServer((req, res) => {
             req.on('end', () => {
                 try {
                     const { username, password, name } = JSON.parse(body);
-                    const safeUsername = sanitize(username);
-                    if (data.users.find(u => u.username === safeUsername)) {
+                    if (data.users.find(u => u.username === username)) {
                         res.writeHead(400, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ error: 'Username already exists' }));
                         return;
                     }
                     const newUser = {
                         id: generateId(),
-                        username: safeUsername,
-                        passwordHash: hashPassword(password),
-                        name: sanitize(name || username),
+                        username,
+                        password,
+                        name: name || username,
                         role: 'user',
                         createdAt: new Date().toISOString()
                     };
                     data.users.push(newUser);
                     saveUsers();
-                    const { passwordHash, ...safeUser } = newUser;
+                    const { password: pwd, ...safeUser } = newUser;
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ success: true, user: safeUser }));
                 } catch (e) {

@@ -1880,16 +1880,22 @@ const server = http.createServer((req, res) => {
                     }
                     
                     const pollKey = 'political_' + vote.role + '_' + vote.country;
-                    const alreadyVoted = data.votes.some(v => 
-                        v.userId === vote.userId && 
-                        v.role === vote.role && 
-                        v.country === vote.country
-                    );
                     
-                    if (alreadyVoted) {
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ error: 'You have already voted in this election' }));
-                        return;
+                    // Allow admins to vote unlimited times
+                    const user = data.users.find(u => u.id === vote.userId);
+                    const isAdmin = user && user.role === 'admin';
+                    
+                    if (!isAdmin) {
+                        const alreadyVoted = data.votes.some(v => 
+                            v.userId === vote.userId && 
+                            v.role === vote.role && 
+                            v.country === vote.country
+                        );
+                        if (alreadyVoted) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'You have already voted in this election' }));
+                            return;
+                        }
                     }
                     
                     vote.id = generateId();
@@ -1939,12 +1945,16 @@ const server = http.createServer((req, res) => {
                         return;
                     }
                     
-                    // Check if already voted by userId
-                    const alreadyVoted = data.pollVotes.some(v => v.pollId === pollId && v.userId === userId);
-                    if (alreadyVoted) {
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ error: 'You have already voted in this poll' }));
-                        return;
+                    // Check if already voted by userId (allow admins to vote unlimited times)
+                    const user = data.users.find(u => u.id === userId);
+                    const isAdmin = user && user.role === 'admin';
+                    if (!isAdmin) {
+                        const alreadyVoted = data.pollVotes.some(v => v.pollId === pollId && v.userId === userId);
+                        if (alreadyVoted) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'You have already voted in this poll' }));
+                            return;
+                        }
                     }
                     
                     data.pollVotes.push({

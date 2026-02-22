@@ -12,6 +12,10 @@ let data = {
     votes: [],
     polls: [],
     pollVotes: [],
+    pollRankings: {},
+    products: [],
+    productOrders: [],
+    candleHistory: {},
     countries: [],
     states: [],
     cities: []
@@ -112,7 +116,8 @@ const STATE_ROLES = ['Governor', 'Mayor', 'MP', 'Deputy'];
 const POLL_CATEGORIES = [
     'Futebol', 'Music', 'Celebrities', 'YouTubers', 'TV Programs', 
     'Movies', 'Sports', 'Technology', 'Gaming', 'Food', 
-    'Travel', 'Fashion', 'Education', 'Politics', 'Science', 'Other'
+    'Travel', 'Fashion', 'Education', 'Politics', 'Science', 
+    'Crypto', 'Market', 'Bets', 'AI', 'Other'
 ];
 
 const html = `
@@ -209,7 +214,7 @@ const html = `
                 <input type="password" id="loginPassword" placeholder="Password" style="text-align:center;">
             </div>
             <button class="btn" onclick="doLogin()" style="width:100%;">Login</button>
-            <p style="margin-top:20px;font-size:12px;color:#888;">Default: admin/admin123 or user/user123</p>
+            <p style="margin-top:20px;font-size:12px;color:#888;">Contact admin for credentials</p>
         </div>
     </div>
     
@@ -221,8 +226,8 @@ const html = `
         <button class="active" onclick="showSection('home')">🏠 Home</button>
         <button onclick="showSection('vote')">🗳️ Cast Vote</button>
         <button onclick="showSection('results')">📊 Results</button>
-        <button onclick="showSection('candidates')">👥 Candidates</button>
         <button onclick="showSection('polls')">📝 My Polls</button>
+        <button onclick="showSection('products')">🎁 Products</button>
         <button id="adminMenuBtn" class="admin-only" onclick="showSection('admin')">⚙️ Admin Panel</button>
         <div style="margin-top:auto;padding-top:20px;border-top:1px solid #444;">
             <p style="font-size:12px;color:#888;margin-bottom:5px;">Logged in as:</p>
@@ -396,6 +401,86 @@ const html = `
             <div id="pollsList"></div>
         </div>
         
+        <!-- PRODUCTS -->
+        <div id="products" class="section">
+            <div class="header">
+                <h2>🎁 Products & Donations</h2>
+                <button class="btn" onclick="showAddProductForm()">+ Add Product</button>
+            </div>
+            
+            <div class="card">
+                <h3>How It Works</h3>
+                <p style="color:#666;line-height:1.6;">
+                    Purchase products and send as donations to friends!<br><br>
+                    1. Browse products below and click "Buy as Gift"<br>
+                    2. Enter recipient's name and contact info<br>
+                    3. Recipient must create an account and vote in this poll to claim their gift<br><br>
+                    <strong>Note:</strong> To receive a donation, the recipient needs to register, login, and cast their vote in the same poll where the product was sent.
+                </p>
+            </div>
+            
+            <div class="card">
+                <h3>Available Products</h3>
+                <div id="productsList"></div>
+            </div>
+            
+            <div class="card">
+                <h3>My Gift Orders</h3>
+                <div id="myProductOrders"></div>
+            </div>
+        </div>
+        
+        <!-- ADD PRODUCT MODAL -->
+        <div id="addProductModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;">
+            <div style="background:white;max-width:500px;margin:100px auto;padding:30px;border-radius:12px;">
+                <h3>Add Product</h3>
+                <div class="form-group">
+                    <label>Product Name *</label>
+                    <input type="text" id="productName" placeholder="e.g., Premium Subscription">
+                </div>
+                <div class="form-group">
+                    <label>Price ($) *</label>
+                    <input type="number" id="productPrice" placeholder="9.99" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" id="productDescription" placeholder="Product description">
+                </div>
+                <div class="form-group">
+                    <label>Link to Poll *</label>
+                    <select id="productPollSelect"></select>
+                </div>
+                <div class="btn-group">
+                    <button class="btn" onclick="submitProduct()">Add Product</button>
+                    <button class="btn btn-secondary" onclick="closeAddProductModal()">Cancel</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- BUY GIFT MODAL -->
+        <div id="buyGiftModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;">
+            <div style="background:white;max-width:500px;margin:100px auto;padding:30px;border-radius:12px;">
+                <h3>🎁 Buy as Gift/Donation</h3>
+                <div id="giftProductInfo"></div>
+                <div class="form-group">
+                    <label>Recipient Name *</label>
+                    <input type="text" id="recipientName" placeholder="Friend's name">
+                </div>
+                <div class="form-group">
+                    <label>Recipient Email/Phone *</label>
+                    <input type="text" id="recipientContact" placeholder="friend@email.com">
+                </div>
+                <div class="form-group">
+                    <label>Your Message (optional)</label>
+                    <input type="text" id="giftMessage" placeholder="Happy birthday!">
+                </div>
+                <div class="btn-group">
+                    <button class="btn" onclick="confirmPurchase()">Confirm Purchase</button>
+                    <button class="btn btn-secondary" onclick="closeBuyGiftModal()">Cancel</button>
+                </div>
+            </div>
+        </div>
+        
         <!-- CREATE POLL MODAL -->
         <div id="createPollModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;">
             <div style="background:white;max-width:500px;margin:100px auto;padding:30px;border-radius:12px;">
@@ -491,6 +576,17 @@ const html = `
             </div>
             
             <div class="card">
+                <h3>🏆 Poll Ranking Manager</h3>
+                <p style="color:#666;margin-bottom:15px;">Reorder polls to show most relevant first</p>
+                <div id="pollRankingList"></div>
+            </div>
+            
+            <div class="card">
+                <h3>📦 Product Approvals</h3>
+                <div id="adminProductsList"></div>
+            </div>
+            
+            <div class="card">
                 <h3>⚠️ Data Management</h3>
                 <div class="btn-group">
                     <button class="btn btn-danger" onclick="clearVotes()">Clear All Votes</button>
@@ -510,7 +606,7 @@ const html = `
         const GLOBAL_ROLES = ['President', 'Senator'];
         const STATE_ROLES = ['Governor', 'Mayor', 'MP', 'Deputy'];
         
-        const POLL_CATEGORIES = ['Futebol', 'Music', 'Celebrities', 'YouTubers', 'TV Programs', 'Movies', 'Sports', 'Technology', 'Gaming', 'Food', 'Travel', 'Fashion', 'Education', 'Politics', 'Science', 'Other'];
+        const POLL_CATEGORIES = ['Futebol', 'Music', 'Celebrities', 'YouTubers', 'TV Programs', 'Movies', 'Sports', 'Technology', 'Gaming', 'Food', 'Travel', 'Fashion', 'Education', 'Politics', 'Science', 'Crypto', 'Market', 'Bets', 'AI', 'Other'];
         
         let selectedCategory = null;
         let selectedPollId = null;
@@ -524,8 +620,8 @@ const html = `
             if (id === 'home') loadStats();
             if (id === 'vote') loadVoteForm();
             if (id === 'results') loadResults();
-            if (id === 'candidates') loadCandidatesList();
             if (id === 'polls') loadPolls();
+            if (id === 'products') loadProducts();
             if (id === 'admin') loadAdmin();
         }
         
@@ -1016,7 +1112,58 @@ const html = `
             }
             html += '</div>';
             
+            // Add candle chart
+            if (poll.options.length >= 2 && total > 0) {
+                html += await generateCandleChart(pollId, poll);
+            }
+            
             document.getElementById('communityResults').innerHTML = html;
+        }
+        
+        async function generateCandleChart(pollId, poll) {
+            const candleData = await api('/candle-history?pollId=' + pollId);
+            
+            if (!candleData || !candleData.history || candleData.history.length === 0) {
+                return '<div class="card" style="margin-top:20px;"><h4>📊 Vote Trend (Top 2)</h4><p style="color:#666;">More votes needed to generate chart</p></div>';
+            }
+            
+            const { option1, option2, history } = candleData;
+            let html = '<div class="card" style="margin-top:20px;">';
+            html += '<h4>📊 Vote Trend: ' + option1.text + ' vs ' + option2.text + '</h4>';
+            
+            history.forEach((candle, idx) => {
+                const maxVotes = Math.max(candle.high1, candle.high2, 10);
+                const scale = 100 / maxVotes;
+                
+                const c1Color = candle.close1 >= candle.open1 ? '#28a745' : '#dc3545';
+                const c2Color = candle.close2 >= candle.open2 ? '#28a745' : '#dc3545';
+                
+                html += '<div style="margin:15px 0;padding:10px;background:#f8f8f8;border-radius:8px;">';
+                html += '<p style="font-size:11px;color:#888;">Update ' + (idx + 1) + '</p>';
+                html += '<div style="display:flex;align-items:flex-end;height:80px;gap:20px;">';
+                
+                // Option 1 bar
+                html += '<div style="flex:1;text-align:center;">';
+                html += '<div style="background:' + c1Color + ';width:40px;margin:0 auto;height:' + (candle.close1 * scale) + 'px;position:relative;">';
+                html += '<div style="position:absolute;top:-20px;width:100%;text-align:center;font-size:11px;">' + candle.close1 + '</div>';
+                html += '</div>';
+                html += '<p style="font-size:11px;margin-top:5px;">' + option1.text + '</p>';
+                html += '</div>';
+                
+                // Option 2 bar
+                html += '<div style="flex:1;text-align:center;">';
+                html += '<div style="background:' + c2Color + ';width:40px;margin:0 auto;height:' + (candle.close2 * scale) + 'px;position:relative;">';
+                html += '<div style="position:absolute;top:-20px;width:100%;text-align:center;font-size:11px;">' + candle.close2 + '</div>';
+                html += '</div>';
+                html += '<p style="font-size:11px;margin-top:5px;">' + option2.text + '</p>';
+                html += '</div>';
+                
+                html += '</div>';
+                html += '</div>';
+            });
+            
+            html += '</div>';
+            return html;
         }
         
         function goToVoteCommunity() {
@@ -1184,6 +1331,7 @@ const html = `
             
             loadAdminCandidates();
             loadAdminPolls();
+            loadAdminProducts();
         }
         
         async function loadAdminStates() {
@@ -1273,6 +1421,231 @@ const html = `
                 });
                 html += '</table>';
                 document.getElementById('adminPollsList').innerHTML = html;
+            }
+            
+            loadPollRanking();
+        }
+        
+        async function loadPollRanking() {
+            const polls = await api('/polls?type=community&approved=true');
+            if (!polls) return;
+            
+            const rankings = data.pollRankings || {};
+            
+            polls.sort((a, b) => {
+                const rankA = rankings[a.id] !== undefined ? rankings[a.id] : 999;
+                const rankB = rankings[b.id] !== undefined ? rankings[b.id] : 999;
+                return rankA - rankB;
+            });
+            
+            let html = '<table><tr><th>Rank</th><th>Poll Title</th><th>Votes</th><th>Move</th></tr>';
+            polls.forEach((p, index) => {
+                const currentRank = rankings[p.id] !== undefined ? rankings[p.id] : index + 1;
+                html += '<tr><td>' + currentRank + '</td><td>' + p.title + '</td><td>' + p.votes + '</td>';
+                html += '<td><button class="btn btn-small" onclick="movePoll(\\'' + p.id + '\\', -1)">↑</button> ';
+                html += '<button class="btn btn-small" onclick="movePoll(\\'' + p.id + '\\', 1)">↓</button></td></tr>';
+            });
+            html += '</table>';
+            document.getElementById('pollRankingList').innerHTML = html;
+        }
+        
+        async function movePoll(pollId, direction) {
+            const polls = await api('/polls?type=community&approved=true');
+            if (!polls) return;
+            
+            const rankings = data.pollRankings || {};
+            const currentRank = rankings[pollId] !== undefined ? rankings[pollId] : polls.findIndex(p => p.id === pollId) + 1;
+            const newRank = currentRank + direction;
+            
+            if (newRank < 1 || newRank > polls.length) return;
+            
+            for (let p of polls) {
+                if (p.id === pollId) {
+                    rankings[pollId] = newRank;
+                } else if (rankings[p.id] === newRank) {
+                    rankings[p.id] = currentRank;
+                } else if (!rankings[p.id]) {
+                    const idx = polls.indexOf(p) + 1;
+                    if (idx === newRank) {
+                        rankings[p.id] = currentRank;
+                    }
+                }
+            }
+            
+            data.pollRankings = rankings;
+            await api('/save-rankings', 'POST', { rankings });
+            loadPollRanking();
+        }
+        
+        async function loadProducts() {
+            const products = await api('/products');
+            const polls = await api('/polls?type=community&approved=true');
+            const orders = await api('/product-orders');
+            
+            if (!products) return;
+            
+            let html = '';
+            if (products.length === 0) {
+                html = '<p>No products available yet.</p>';
+            } else {
+                products.filter(p => p.approved).forEach(prod => {
+                    const poll = polls.find(p => p.id === prod.pollId);
+                    html += '<div class="poll-card">';
+                    html += '<div class="poll-header"><h4>' + prod.name + '</h4>';
+                    html += '<span style="font-size:18px;font-weight:bold;color:#28a745;">$' + prod.price + '</span></div>';
+                    if (prod.description) html += '<p>' + prod.description + '</p>';
+                    html += '<p style="color:#666;font-size:12px;">For poll: ' + (poll ? poll.title : 'N/A') + '</p>';
+                    html += '<button class="btn btn-small" onclick="openBuyGift(\\'' + prod.id + '\\')">🎁 Buy as Gift</button>';
+                    html += '</div>';
+                });
+            }
+            document.getElementById('productsList').innerHTML = html;
+            
+            let ordersHtml = '';
+            const myOrders = orders.filter(o => o.buyerId === currentUser?.id || o.recipientContact === currentUser?.username);
+            if (myOrders.length === 0) {
+                ordersHtml = '<p>No gift orders yet.</p>';
+            } else {
+                myOrders.forEach(o => {
+                    const prod = products.find(p => p.id === o.productId);
+                    ordersHtml += '<div class="poll-card">';
+                    ordersHtml += '<p><strong>' + (prod ? prod.name : 'Unknown') + '</strong> - $' + (prod ? prod.price : '0') + '</p>';
+                    ordersHtml += '<p>To: ' + o.recipientName + ' (' + o.recipientContact + ')</p>';
+                    ordersHtml += '<p>Status: ' + (o.claimed ? '✓ Claimed' : '⏳ Pending claim') + '</p>';
+                    ordersHtml += '</div>';
+                });
+            }
+            document.getElementById('myProductOrders').innerHTML = ordersHtml;
+        }
+        
+        function showAddProductForm() {
+            api('/polls?type=community&approved=true').then(polls => {
+                const select = document.getElementById('productPollSelect');
+                select.innerHTML = '';
+                polls.forEach(p => {
+                    select.innerHTML += '<option value="' + p.id + '">' + p.title + '</option>';
+                });
+                document.getElementById('addProductModal').style.display = 'block';
+            });
+        }
+        
+        function closeAddProductModal() {
+            document.getElementById('addProductModal').style.display = 'none';
+        }
+        
+        async function submitProduct() {
+            const name = document.getElementById('productName').value.trim();
+            const price = parseFloat(document.getElementById('productPrice').value);
+            const description = document.getElementById('productDescription').value.trim();
+            const pollId = document.getElementById('productPollSelect').value;
+            
+            if (!name || !price || !pollId) {
+                alert('Please fill all required fields');
+                return;
+            }
+            
+            const result = await api('/products', 'POST', {
+                name, price, description, pollId,
+                suggestedBy: currentUser?.id,
+                approved: currentUser?.role === 'admin'
+            });
+            
+            if (result && result.success) {
+                alert(currentUser?.role === 'admin' ? 'Product added!' : 'Product suggested! Waiting for admin approval.');
+                closeAddProductModal();
+                loadProducts();
+            }
+        }
+        
+        let selectedProductForGift = null;
+        
+        function openBuyGift(productId) {
+            selectedProductForGift = productId;
+            api('/products').then(products => {
+                const prod = products.find(p => p.id === productId);
+                if (!prod) return;
+                document.getElementById('giftProductInfo').innerHTML = '<p><strong>' + prod.name + '</strong> - $' + prod.price + '</p>';
+                document.getElementById('buyGiftModal').style.display = 'block';
+            });
+        }
+        
+        function closeBuyGiftModal() {
+            document.getElementById('buyGiftModal').style.display = 'none';
+            selectedProductForGift = null;
+        }
+        
+        async function confirmPurchase() {
+            const recipientName = document.getElementById('recipientName').value.trim();
+            const recipientContact = document.getElementById('recipientContact').value.trim();
+            const message = document.getElementById('giftMessage').value.trim();
+            
+            if (!recipientName || !recipientContact || !selectedProductForGift) {
+                alert('Please fill required fields');
+                return;
+            }
+            
+            const result = await api('/product-orders', 'POST', {
+                productId: selectedProductForGift,
+                buyerId: currentUser?.id,
+                buyerName: currentUser?.name,
+                recipientName,
+                recipientContact,
+                message
+            });
+            
+            if (result && result.success) {
+                alert('Gift purchased! Recipient will be notified to claim after registering and voting.');
+                closeBuyGiftModal();
+                loadProducts();
+            }
+        }
+        
+        async function loadAdminProducts() {
+            const products = await api('/products');
+            if (!products) return;
+            
+            const pendingProducts = products.filter(p => !p.approved);
+            const approvedProducts = products.filter(p => p.approved);
+            
+            let html = '<h4>Pending Products</h4>';
+            if (pendingProducts.length === 0) {
+                html += '<p>No pending products</p>';
+            } else {
+                html += '<table><tr><th>Name</th><th>Price</th><th>Poll</th><th>Action</th></tr>';
+                pendingProducts.forEach(p => {
+                    html += '<tr><td>' + p.name + '</td><td>$' + p.price + '</td><td>' + (p.pollId || 'N/A') + '</td>';
+                    html += '<td><button class="btn btn-success btn-small" onclick="approveProduct(\\'' + p.id + '\\')">Approve</button> ';
+                    html += '<button class="btn btn-danger btn-small" onclick="removeProduct(\\'' + p.id + '\\')">Reject</button></td></tr>';
+                });
+                html += '</table>';
+            }
+            html += '<h4 style="margin-top:20px;">Approved Products</h4>';
+            if (approvedProducts.length === 0) {
+                html += '<p>No approved products</p>';
+            } else {
+                html += '<table><tr><th>Name</th><th>Price</th><th>Action</th></tr>';
+                approvedProducts.forEach(p => {
+                    html += '<tr><td>' + p.name + '</td><td>$' + p.price + '</td>';
+                    html += '<td><button class="btn btn-danger btn-small" onclick="removeProduct(\\'' + p.id + '\\')">Delete</button></td></tr>';
+                });
+                html += '</table>';
+            }
+            document.getElementById('adminProductsList').innerHTML = html;
+        }
+        
+        async function approveProduct(id) {
+            const result = await api('/products/approve/' + id, 'POST');
+            if (result && result.success) {
+                alert('Product approved!');
+                loadAdminProducts();
+            }
+        }
+        
+        async function removeProduct(id) {
+            if (!confirm('Delete this product?')) return;
+            const result = await api('/products/' + id, 'DELETE');
+            if (result && result.success) {
+                loadAdminProducts();
             }
         }
         
@@ -1583,6 +1956,10 @@ const server = http.createServer((req, res) => {
                         optionText,
                         timestamp: new Date().toISOString()
                     });
+                    
+                    // Record candle history
+                    recordCandleHistory(pollId);
+                    
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ success: true }));
                 } catch (e) {
@@ -1590,6 +1967,92 @@ const server = http.createServer((req, res) => {
                     res.end(JSON.stringify({ error: e.message }));
                 }
             });
+            return;
+        }
+        
+        function recordCandleHistory(pollId) {
+            const pollVotes = data.pollVotes.filter(v => v.pollId === pollId);
+            const poll = data.polls.find(p => p.id === pollId);
+            if (!poll || !poll.options || poll.options.length < 2) return;
+            
+            const votesByOption = {};
+            poll.options.forEach(opt => {
+                votesByOption[opt.id] = pollVotes.filter(v => v.optionId === opt.id).length;
+            });
+            
+            const sortedOptions = poll.options.slice().sort((a, b) => votesByOption[b.id] - votesByOption[a.id]);
+            const top1 = sortedOptions[0] ? sortedOptions[0].id : null;
+            const top2 = sortedOptions[1] ? sortedOptions[1].id : null;
+            
+            if (!top1 || !top2) return;
+            
+            const key = pollId + '_' + top1 + '_' + top2;
+            const reverseKey = pollId + '_' + top2 + '_' + top1;
+            
+            let history = data.candleHistory[key] || [];
+            const now = new Date().toISOString();
+            const currentVotes1 = votesByOption[top1];
+            const currentVotes2 = votesByOption[top2];
+            
+            if (history.length > 0) {
+                const last = history[history.length - 1];
+                if (last.close1 !== currentVotes1 || last.close2 !== currentVotes2) {
+                    history.push({
+                        timestamp: now,
+                        open1: last.close1,
+                        open2: last.close2,
+                        close1: currentVotes1,
+                        close2: currentVotes2,
+                        high1: Math.max(last.high1, currentVotes1),
+                        high2: Math.max(last.high2, currentVotes2),
+                        low1: Math.min(last.low1, currentVotes1),
+                        low2: Math.min(last.low2, currentVotes2)
+                    });
+                }
+            } else {
+                history.push({
+                    timestamp: now,
+                    open1: 0, open2: 0,
+                    close1: currentVotes1, close2: currentVotes2,
+                    high1: currentVotes1, high2: currentVotes2,
+                    low1: currentVotes1, low2: currentVotes2
+                });
+            }
+            
+            data.candleHistory[key] = history;
+        }
+        
+        // Get candle history
+        if (path === 'candle-history' && req.method === 'GET') {
+            const pollId = url.searchParams.get('pollId');
+            const poll = data.polls.find(p => p.id === pollId);
+            if (!poll || !poll.options || poll.options.length < 2) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify([]));
+                return;
+            }
+            
+            const pollVotes = data.pollVotes.filter(v => v.pollId === pollId);
+            const votesByOption = {};
+            poll.options.forEach(opt => {
+                votesByOption[opt.id] = pollVotes.filter(v => v.optionId === opt.id).length;
+            });
+            
+            const sortedOptions = poll.options.slice().sort((a, b) => votesByOption[b.id] - votesByOption[a.id]);
+            const top1 = sortedOptions[0] ? sortedOptions[0] : null;
+            const top2 = sortedOptions[1] ? sortedOptions[1] : null;
+            
+            if (!top1 || !top2) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify([]));
+                return;
+            }
+            
+            const key = pollId + '_' + top1.id + '_' + top2.id;
+            const history = data.candleHistory[key] || [];
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ option1: top1, option2: top2, history }));
             return;
         }
         
@@ -1697,6 +2160,96 @@ const server = http.createServer((req, res) => {
             saveCandidates();
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true }));
+            return;
+        }
+        
+        // Products
+        if (path === 'products' && req.method === 'GET') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(data.products));
+            return;
+        }
+        
+        if (path === 'products' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const product = JSON.parse(body);
+                    product.id = generateId();
+                    product.createdAt = new Date().toISOString();
+                    data.products.push(product);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true }));
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+            });
+            return;
+        }
+        
+        const productsApproveMatch = path.match(/^products\/approve\/(.+)$/);
+        if (productsApproveMatch && req.method === 'POST') {
+            const id = productsApproveMatch[1];
+            const product = data.products.find(p => p.id === id);
+            if (product) product.approved = true;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+            return;
+        }
+        
+        const productsDeleteMatch = path.match(/^products\/(.+)$/);
+        if (productsDeleteMatch && req.method === 'DELETE') {
+            const id = productsDeleteMatch[1];
+            data.products = data.products.filter(p => p.id !== id);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+            return;
+        }
+        
+        // Product Orders
+        if (path === 'product-orders' && req.method === 'GET') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(data.productOrders));
+            return;
+        }
+        
+        if (path === 'product-orders' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const order = JSON.parse(body);
+                    order.id = generateId();
+                    order.createdAt = new Date().toISOString();
+                    order.claimed = false;
+                    data.productOrders.push(order);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true }));
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+            });
+            return;
+        }
+        
+        // Save Rankings
+        if (path === 'save-rankings' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const { rankings } = JSON.parse(body);
+                    data.pollRankings = rankings;
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true }));
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+            });
             return;
         }
         

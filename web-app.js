@@ -2,9 +2,59 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
-const PORT = 18792;
+const PORT = process.env.PORT || 18793;
+const HOST = '0.0.0.0';
 const DATA_DIR = '/Users/raymondturing/Documents/Data-Toalha';
+const SCRYPT_KEYLEN = 64;
+const SCRYPT_COST = 16384;
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
+const SESSION_TTL = 24 * 60 * 60 * 1000;
+
+// OAuth Config (placeholders - set env vars for production)
+const OAUTH_CONFIG = {
+  google: { clientId: process.env.GOOGLE_CLIENT_ID || '', enabled: !!process.env.GOOGLE_CLIENT_ID },
+  apple: { clientId: process.env.APPLE_CLIENT_ID || '', enabled: !!process.env.APPLE_CLIENT_ID },
+  facebook: { clientId: process.env.FACEBOOK_APP_ID || '', enabled: !!process.env.FACEBOOK_APP_ID }
+};
+
+// Password hashing with scrypt
+function hashPassword(password) {
+  const salt = crypto.randomBytes(32).toString('hex');
+  const hash = crypto.scryptSync(password, salt, SCRYPT_KEYLEN, { N: SCRYPT_COST }).toString('hex');
+  return `scrypt:${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  if (!stored.startsWith('scrypt:')) {
+    // Legacy plaintext comparison - migrate on next save
+    return password === stored;
+  }
+  const [, salt, hash] = stored.split(':');
+  const derived = crypto.scryptSync(password, salt, SCRYPT_KEYLEN, { N: SCRYPT_COST }).toString('hex');
+  return derived === hash;
+}
+
+// Session token generation
+function createToken(user) {
+  const payload = JSON.stringify({ id: user.id, role: user.role, exp: Date.now() + SESSION_TTL });
+  const sig = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('hex');
+  return Buffer.from(payload).toString('base64url') + '.' + sig;
+}
+
+function verifyToken(token) {
+  if (!token) return null;
+  try {
+    const [payloadB64, sig] = token.split('.');
+    const payload = Buffer.from(payloadB64, 'base64url').toString();
+    const expected = crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('hex');
+    if (sig !== expected) return null;
+    const parsed = JSON.parse(payload);
+    if (parsed.exp < Date.now()) return null;
+    return parsed;
+  } catch { return null; }
+}
 
 let data = {
     users: [],
@@ -16,6 +66,7 @@ let data = {
     products: [],
     productOrders: [],
     candleHistory: {},
+    pollChats: {},
     countries: [],
     states: [],
     cities: []
@@ -202,18 +253,62 @@ const html = `
 <body>
     <!-- LOGIN OVERLAY -->
     <div id="loginOverlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);z-index:2000;display:flex;align-items:center;justify-content:center;">
-        <div style="background:white;padding:40px;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);text-align:center;max-width:400px;width:90%;">
-            <img src="/logo" style="max-width:150px;margin-bottom:20px;" alt="Data Toalha Logo">
-            <h2 style="color:#1a1a2e;margin-bottom:20px;">Data Toalha</h2>
-            <p style="color:#666;margin-bottom:30px;">Digital Voting Platform</p>
-            <div class="form-group">
-                <input type="text" id="loginUsername" placeholder="Username" style="text-align:center;">
+        <div style="background:white;padding:40px;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);text-align:center;max-width:420px;width:90%;">
+            <img src="/logo" style="max-width:120px;margin-bottom:15px;border-radius:12px;" alt="Data Toalha Logo">
+            <h2 style="color:#1a1a2e;margin-bottom:5px;">Data Toalha</h2>
+            <p style="color:#666;margin-bottom:20px;font-size:14px;">Plataforma Digital de Votacao</p>
+
+            <!-- Tab Switcher -->
+            <div style="display:flex;gap:0;margin-bottom:20px;border-radius:8px;overflow:hidden;border:1px solid #ddd;">
+                <button id="loginTab" onclick="switchAuthTab('login')" style="flex:1;padding:10px;border:none;background:#4A90D9;color:white;cursor:pointer;font-weight:600;">Login</button>
+                <button id="registerTab" onclick="switchAuthTab('register')" style="flex:1;padding:10px;border:none;background:#f5f5f5;color:#666;cursor:pointer;font-weight:600;">Registrar</button>
             </div>
-            <div class="form-group">
-                <input type="password" id="loginPassword" placeholder="Password" style="text-align:center;">
+
+            <!-- Login Form -->
+            <div id="loginForm">
+                <div class="form-group">
+                    <input type="text" id="loginUsername" placeholder="Username" style="text-align:center;">
+                </div>
+                <div class="form-group">
+                    <input type="password" id="loginPassword" placeholder="Senha" style="text-align:center;">
+                </div>
+                <button class="btn" onclick="doLogin()" style="width:100%;">Entrar</button>
             </div>
-            <button class="btn" onclick="doLogin()" style="width:100%;">Login</button>
-            <p style="margin-top:20px;font-size:12px;color:#888;">Default: admin/admin123 or user/user123</p>
+
+            <!-- Register Form -->
+            <div id="registerForm" style="display:none;">
+                <div class="form-group">
+                    <input type="text" id="regName" placeholder="Nome completo" style="text-align:center;">
+                </div>
+                <div class="form-group">
+                    <input type="text" id="regUsername" placeholder="Username" style="text-align:center;">
+                </div>
+                <div class="form-group">
+                    <input type="password" id="regPassword" placeholder="Senha (min 6 caracteres)" style="text-align:center;">
+                </div>
+                <button class="btn" onclick="doRegister()" style="width:100%;">Criar Conta</button>
+            </div>
+
+            <div id="authError" style="color:#dc3545;font-size:13px;margin-top:10px;display:none;"></div>
+
+            <!-- OAuth Buttons -->
+            <div style="margin-top:20px;padding-top:15px;border-top:1px solid #eee;">
+                <p style="font-size:12px;color:#999;margin-bottom:12px;">Ou entre com:</p>
+                <div style="display:flex;gap:10px;justify-content:center;">
+                    <button onclick="oauthLogin('google')" style="padding:10px 20px;border:1px solid #ddd;border-radius:8px;background:white;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:13px;" title="Google">
+                        <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                        Google
+                    </button>
+                    <button onclick="oauthLogin('apple')" style="padding:10px 20px;border:1px solid #ddd;border-radius:8px;background:white;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:13px;" title="Apple">
+                        <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#000" d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+                        Apple
+                    </button>
+                    <button onclick="oauthLogin('facebook')" style="padding:10px 20px;border:1px solid #ddd;border-radius:8px;background:white;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:13px;" title="Facebook">
+                        <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#1877F2" d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                        Facebook
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -643,10 +738,11 @@ const html = `
         let selectedPollId = null;
         
         function showSection(id) {
+            if (typeof stopChatRefresh === 'function') stopChatRefresh();
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
             document.getElementById(id).classList.add('active');
             document.querySelectorAll('.sidebar button').forEach(b => b.classList.remove('active'));
-            event.target.classList.add('active');
+            if (event && event.target) event.target.classList.add('active');
             
             if (id === 'home') loadStats();
             if (id === 'vote') loadVoteForm();
@@ -657,11 +753,19 @@ const html = `
             if (id === 'admin') loadAdmin();
         }
         
+        // Detect base path (for proxy/subpath deployments)
+        const BASE = (function() {
+            const p = window.location.pathname;
+            // If served under /app, API calls go to /app/api
+            if (p.startsWith('/app')) return '/app';
+            return '';
+        })();
+
         async function api(path, method = 'GET', body = null) {
             try {
                 const options = { method, headers: { 'Content-Type': 'application/json' } };
                 if (body) options.body = JSON.stringify(body);
-                const res = await fetch('/api' + path, options);
+                const res = await fetch(BASE + '/api' + path, options);
                 return res.json();
             } catch (e) {
                 console.error('API Error:', e);
@@ -860,6 +964,8 @@ const html = `
         
         async function getVotedPolls() {
             if (!currentUser) return [];
+            // Admins can always vote again (for testing)
+            if (currentUser.role === 'admin') return [];
             const myVotes = await api('/my-votes?userId=' + currentUser.id);
             return myVotes ? myVotes.map(v => v.pollId) : [];
         }
@@ -925,7 +1031,7 @@ const html = `
             }
             
             html += '<div style="margin-top:15px;">';
-            html += '<button class="btn btn-small btn-secondary" onclick="sharePoll(\'' + poll.shareCode + '\')">📤 Share Poll</button>';
+            html += '<button class="btn btn-small btn-secondary" onclick="sharePoll(\\x27' + poll.shareCode + '\\x27)">📤 Share Poll</button>';
             html += '</div>';
             
             // Add products for this poll
@@ -937,7 +1043,7 @@ const html = `
                 pollProducts.forEach(prod => {
                     html += '<div style="padding:10px;margin:5px 0;background:#f8f8f8;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">';
                     html += '<div><strong>' + prod.name + '</strong><br><span style="color:#28a745;font-weight:bold;">$' + prod.price + '</span></div>';
-                    html += '<button class="btn btn-small" onclick="openBuyGift(\'' + prod.id + '\')">🎁 Buy Gift</button>';
+                    html += '<button class="btn btn-small" onclick="openBuyGift(\\x27' + prod.id + '\\x27)">🎁 Buy Gift</button>';
                     html += '</div>';
                 });
                 html += '</div>';
@@ -1163,8 +1269,19 @@ const html = `
             if (poll.options.length >= 2 && total > 0) {
                 html += await generateCandleChart(pollId, poll);
             }
-            
+
+            // Add discussion chat
+            html += '<div class="card" style="margin-top:20px;">';
+            html += '<h3 style="margin-bottom:15px;">💬 Discussion</h3>';
+            html += '<div id="chatMessages_' + pollId + '" style="max-height:350px;overflow-y:auto;border:1px solid #eee;border-radius:8px;padding:8px;margin-bottom:12px;background:#fafafa;"></div>';
+            html += '<div style="display:flex;gap:8px;">';
+            html += '<input type="text" id="chatInput_' + pollId + '" placeholder="Write a message..." style="flex:1;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px;" onkeypress="if(event.key===\\x27Enter\\x27)sendChatMessage(\\x27' + pollId + '\\x27)">';
+            html += '<button class="btn" onclick="sendChatMessage(\\x27' + pollId + '\\x27)">Send</button>';
+            html += '</div></div>';
+
             document.getElementById('communityResults').innerHTML = html;
+            loadPollChat(pollId);
+            startChatRefresh(pollId);
         }
         
         function goToVoteCommunity() {
@@ -1443,8 +1560,8 @@ const html = `
             polls.forEach((p, index) => {
                 const currentRank = rankings[p.id] !== undefined ? rankings[p.id] : index + 1;
                 html += '<tr><td>' + currentRank + '</td><td>' + p.title + '</td><td>' + p.votes + '</td>';
-                html += '<td><button class="btn btn-small" onclick="movePoll(\'' + p.id + '\', -1)">↑</button> ';
-                html += '<button class="btn btn-small" onclick="movePoll(\'' + p.id + '\', 1)">↓</button></td></tr>';
+                html += '<td><button class="btn btn-small" onclick="movePoll(\\x27' + p.id + '\\x27, -1)">↑</button> ';
+                html += '<button class="btn btn-small" onclick="movePoll(\\x27' + p.id + '\\x27, 1)">↓</button></td></tr>';
             });
             html += '</table>';
             document.getElementById('pollRankingList').innerHTML = html;
@@ -1492,8 +1609,8 @@ const html = `
                 html += '<table><tr><th>Name</th><th>Price</th><th>Poll</th><th>Action</th></tr>';
                 pendingProducts.forEach(p => {
                     html += '<tr><td>' + p.name + '</td><td>$' + p.price + '</td><td>' + (p.pollId || 'N/A') + '</td>';
-                    html += '<td><button class="btn btn-success btn-small" onclick="approveProduct(\'' + p.id + '\')">Approve</button> ';
-                    html += '<button class="btn btn-danger btn-small" onclick="removeProduct(\'' + p.id + '\')">Reject</button></td></tr>';
+                    html += '<td><button class="btn btn-success btn-small" onclick="approveProduct(\\x27' + p.id + '\\x27)">Approve</button> ';
+                    html += '<button class="btn btn-danger btn-small" onclick="removeProduct(\\x27' + p.id + '\\x27)">Reject</button></td></tr>';
                 });
                 html += '</table>';
             }
@@ -1504,7 +1621,7 @@ const html = `
                 html += '<table><tr><th>Name</th><th>Price</th><th>Action</th></tr>';
                 approvedProducts.forEach(p => {
                     html += '<tr><td>' + p.name + '</td><td>$' + p.price + '</td>';
-                    html += '<td><button class="btn btn-danger btn-small" onclick="removeProduct(\'' + p.id + '\')">Delete</button></td></tr>';
+                    html += '<td><button class="btn btn-danger btn-small" onclick="removeProduct(\\x27' + p.id + '\\x27)">Delete</button></td></tr>';
                 });
                 html += '</table>';
             }
@@ -1545,7 +1662,7 @@ const html = `
                     html += '<span style="font-size:18px;font-weight:bold;color:#28a745;">$' + prod.price + '</span></div>';
                     if (prod.description) html += '<p>' + prod.description + '</p>';
                     html += '<p style="color:#666;font-size:12px;">For poll: ' + (poll ? poll.title : 'N/A') + '</p>';
-                    html += '<button class="btn btn-small" onclick="openBuyGift(\'' + prod.id + '\')">🎁 Buy as Gift</button>';
+                    html += '<button class="btn btn-small" onclick="openBuyGift(\\x27' + prod.id + '\\x27)">🎁 Buy as Gift</button>';
                     html += '</div>';
                 });
             }
@@ -1645,7 +1762,7 @@ const html = `
             });
             
             if (result && result.success) {
-                alert('Gift purchased! Voucher Code: ' + result.voucherCode + '\n\nShare this code with ' + recipientName + ' to claim their gift after registering and voting.');
+                alert('Gift purchased! Voucher Code: ' + result.voucherCode + '\\n\\nShare this code with ' + recipientName + ' to claim their gift after registering and voting.');
                 closeBuyGiftModal();
                 loadProducts();
             }
@@ -1701,7 +1818,7 @@ const html = `
             const poll = polls.find(p => p.shareCode && p.shareCode.toUpperCase() === code);
             
             if (poll) {
-                let html = '<div class="poll-card" style="border:2px solid #4A90D9;cursor:pointer;" onclick="viewPollResults(\'' + poll.id + '\')">';
+                let html = '<div class="poll-card" style="border:2px solid #4A90D9;cursor:pointer;" onclick="viewPollResults(\\x27' + poll.id + '\\x27)">';
                 html += '<h4>' + poll.title + '</h4>';
                 html += '<p>Category: ' + (poll.category || 'Other') + '</p>';
                 html += '<p>Click to view results and vote →</p>';
@@ -1853,64 +1970,162 @@ const html = `
         }
         
         loadStats();
-        
+
         let currentUser = null;
-        
+        let authToken = localStorage.getItem('dt_app_token') || null;
+
+        function showAuthError(msg) {
+            const el = document.getElementById('authError');
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 4000);
+        }
+
+        function switchAuthTab(tab) {
+            document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
+            document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
+            document.getElementById('loginTab').style.background = tab === 'login' ? '#4A90D9' : '#f5f5f5';
+            document.getElementById('loginTab').style.color = tab === 'login' ? 'white' : '#666';
+            document.getElementById('registerTab').style.background = tab === 'register' ? '#4A90D9' : '#f5f5f5';
+            document.getElementById('registerTab').style.color = tab === 'register' ? 'white' : '#666';
+            document.getElementById('authError').style.display = 'none';
+        }
+
+        function handleAuthSuccess(data) {
+            currentUser = data.user;
+            authToken = data.token;
+            localStorage.setItem('dt_app_token', data.token);
+            document.getElementById('loginOverlay').style.display = 'none';
+            document.getElementById('appContent').style.display = 'block';
+            document.getElementById('currentUserName').textContent = data.user.name;
+            if (data.user.role === 'admin') {
+                document.body.classList.add('admin-mode');
+                document.getElementById('adminMenuBtn').style.display = 'block';
+            } else {
+                document.body.classList.remove('admin-mode');
+                document.getElementById('adminMenuBtn').style.display = 'none';
+            }
+            loadStats();
+        }
+
         function doLogin() {
             const username = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value;
-            
-            if (!username || !password) {
-                alert('Please enter username and password');
-                return;
-            }
-            
-            fetch('/api/login', {
+            if (!username || !password) { showAuthError('Preencha usuario e senha'); return; }
+
+            fetch(BASE + '/api/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
             })
             .then(res => res.json())
             .then(data => {
-                if (data.success) {
-                    currentUser = data.user;
-                    document.getElementById('loginOverlay').style.display = 'none';
-                    document.getElementById('appContent').style.display = 'block';
-                    document.getElementById('currentUserName').textContent = data.user.name;
-                    
-                    if (data.user.role === 'admin') {
-                        document.body.classList.add('admin-mode');
-                        document.getElementById('adminMenuBtn').style.display = 'block';
-                    } else {
-                        document.body.classList.remove('admin-mode');
-                        document.getElementById('adminMenuBtn').style.display = 'none';
-                    }
-                    
-                    loadStats();
-                } else {
-                    alert(data.error || 'Invalid credentials');
-                }
+                if (data.success) { handleAuthSuccess(data); }
+                else { showAuthError(data.error || 'Credenciais invalidas'); }
             })
-            .catch(e => {
-                alert('Login failed: ' + e.message);
-            });
+            .catch(e => showAuthError('Erro de conexao: ' + e.message));
         }
-        
+
+        function doRegister() {
+            const name = document.getElementById('regName').value.trim();
+            const username = document.getElementById('regUsername').value.trim();
+            const password = document.getElementById('regPassword').value;
+            if (!username || !password) { showAuthError('Preencha todos os campos'); return; }
+            if (password.length < 6) { showAuthError('Senha deve ter no minimo 6 caracteres'); return; }
+
+            fetch(BASE + '/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, name: name || username })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) { handleAuthSuccess(data); }
+                else { showAuthError(data.error || 'Erro ao registrar'); }
+            })
+            .catch(e => showAuthError('Erro de conexao: ' + e.message));
+        }
+
+        function oauthLogin(provider) {
+            showAuthError(provider.charAt(0).toUpperCase() + provider.slice(1) + ' login em breve - configure OAuth credentials');
+        }
+
         function doLogout() {
             currentUser = null;
+            authToken = null;
+            localStorage.removeItem('dt_app_token');
             document.getElementById('loginOverlay').style.display = 'flex';
             document.getElementById('appContent').style.display = 'none';
             document.getElementById('loginUsername').value = '';
             document.getElementById('loginPassword').value = '';
         }
-        
+
         function checkAuth() {
             return currentUser;
         }
-        
+
         document.getElementById('loginPassword').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') doLogin();
         });
+        document.getElementById('regPassword').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') doRegister();
+        });
+
+        // ── Poll Chat ──
+        let chatRefreshTimer = null;
+
+        function escChat(str) {
+            const d = document.createElement('div');
+            d.textContent = str || '';
+            return d.innerHTML;
+        }
+
+        async function loadPollChat(pollId) {
+            const msgs = await api('/poll-chat/' + pollId);
+            if (!msgs) return;
+            const container = document.getElementById('chatMessages_' + pollId);
+            if (!container) return;
+            if (msgs.length === 0) {
+                container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No messages yet. Start the discussion!</p>';
+            } else {
+                container.innerHTML = msgs.map(m => {
+                    const isMe = currentUser && m.userId === currentUser.id;
+                    const isAdm = m.userName === 'Administrator' || m.userId === 'admin1';
+                    const time = new Date(m.timestamp).toLocaleString('pt-BR', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'});
+                    return '<div style="padding:8px 12px;margin:4px 0;background:' + (isMe ? '#e3f2fd' : '#f8f8f8') + ';border-radius:8px;' + (isMe ? 'margin-left:20px;' : 'margin-right:20px;') + '">'
+                        + '<div style="display:flex;justify-content:space-between;margin-bottom:2px;">'
+                        + '<strong style="font-size:12px;color:' + (isAdm ? '#d32f2f' : '#333') + ';">' + escChat(m.userName) + (isAdm ? ' (Admin)' : '') + '</strong>'
+                        + '<span style="font-size:11px;color:#999;">' + time + '</span></div>'
+                        + '<div style="font-size:14px;">' + escChat(m.text) + '</div></div>';
+                }).join('');
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        async function sendChatMessage(pollId) {
+            if (!currentUser) { alert('Please login first'); return; }
+            const input = document.getElementById('chatInput_' + pollId);
+            if (!input) return;
+            const text = input.value.trim();
+            if (!text) return;
+            input.value = '';
+            await api('/poll-chat', 'POST', {
+                pollId: pollId,
+                userId: currentUser.id,
+                userName: currentUser.name,
+                text: text
+            });
+            loadPollChat(pollId);
+        }
+
+        function startChatRefresh(pollId) {
+            if (chatRefreshTimer) clearInterval(chatRefreshTimer);
+            chatRefreshTimer = setInterval(() => loadPollChat(pollId), 5000);
+        }
+
+        function stopChatRefresh() {
+            if (chatRefreshTimer) { clearInterval(chatRefreshTimer); chatRefreshTimer = null; }
+        }
     </script>
 </body>
 </html>
@@ -1920,10 +2135,10 @@ const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     
     if (url.pathname.startsWith('/api/')) {
-        const path = url.pathname.slice(5);
+        const apiPath = url.pathname.slice(5);
         
         // Stats
-        if (path === 'stats' && req.method === 'GET') {
+        if (apiPath === 'stats' && req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
                 votes: data.votes.length,
@@ -1935,14 +2150,14 @@ const server = http.createServer((req, res) => {
         }
         
         // Countries
-        if (path === 'countries' && req.method === 'GET') {
+        if (apiPath === 'countries' && req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(data.countries.map(c => ({ name: c.name }))));
             return;
         }
         
         // States
-        if (path === 'states' && req.method === 'GET') {
+        if (apiPath === 'states' && req.method === 'GET') {
             const country = url.searchParams.get('country');
             if (!country) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify([])); return; }
             const states = data.states.filter(s => s.country_name && s.country_name.toLowerCase() === country.toLowerCase());
@@ -1953,7 +2168,7 @@ const server = http.createServer((req, res) => {
         }
         
         // Cities
-        if (path === 'cities' && req.method === 'GET') {
+        if (apiPath === 'cities' && req.method === 'GET') {
             const country = url.searchParams.get('country');
             const state = url.searchParams.get('state');
             if (!country || !state) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify([])); return; }
@@ -1965,7 +2180,7 @@ const server = http.createServer((req, res) => {
         }
         
         // Candidates
-        if (path === 'candidates' && req.method === 'GET') {
+        if (apiPath === 'candidates' && req.method === 'GET') {
             const country = url.searchParams.get('country');
             const state = url.searchParams.get('state');
             const role = url.searchParams.get('role');
@@ -1979,21 +2194,21 @@ const server = http.createServer((req, res) => {
         }
         
         // All candidates
-        if (path === 'all-candidates' && req.method === 'GET') {
+        if (apiPath === 'all-candidates' && req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(data.candidates));
             return;
         }
         
         // Votes
-        if (path === 'votes' && req.method === 'GET') {
+        if (apiPath === 'votes' && req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(data.votes));
             return;
         }
         
         // POST vote
-        if (path === 'vote' && req.method === 'POST') {
+        if (apiPath === 'vote' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -2006,17 +2221,20 @@ const server = http.createServer((req, res) => {
                         return;
                     }
                     
-                    const pollKey = 'political_' + vote.role + '_' + vote.country;
-                    const alreadyVoted = data.votes.some(v => 
-                        v.userId === vote.userId && 
-                        v.role === vote.role && 
-                        v.country === vote.country
-                    );
-                    
-                    if (alreadyVoted) {
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ error: 'You have already voted in this election' }));
-                        return;
+                    // Allow admins to vote unlimited times for testing
+                    const votingUser = data.users.find(u => u.id === vote.userId);
+                    const isAdmin = votingUser && votingUser.role === 'admin';
+                    if (!isAdmin) {
+                        const alreadyVoted = data.votes.some(v =>
+                            v.userId === vote.userId &&
+                            v.role === vote.role &&
+                            v.country === vote.country
+                        );
+                        if (alreadyVoted) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'You have already voted in this election' }));
+                            return;
+                        }
                     }
                     
                     vote.id = generateId();
@@ -2034,7 +2252,7 @@ const server = http.createServer((req, res) => {
         }
         
         // My votes (by userId)
-        if (path === 'my-votes' && req.method === 'GET') {
+        if (apiPath === 'my-votes' && req.method === 'GET') {
             const userId = url.searchParams.get('userId');
             let userVotes = data.pollVotes;
             if (userId) {
@@ -2046,20 +2264,20 @@ const server = http.createServer((req, res) => {
         }
         
         // Poll votes
-        if (path === 'poll-votes' && req.method === 'GET') {
+        if (apiPath === 'poll-votes' && req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(data.pollVotes));
             return;
         }
         
         // Products
-        if (path === 'products' && req.method === 'GET') {
+        if (apiPath === 'products' && req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(data.products));
             return;
         }
         
-        if (path === 'products' && req.method === 'POST') {
+        if (apiPath === 'products' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -2078,7 +2296,7 @@ const server = http.createServer((req, res) => {
             return;
         }
         
-        const productsApproveMatch = path.match(/^products\/approve\/(.+)$/);
+        const productsApproveMatch = apiPath.match(/^products\/approve\/(.+)$/);
         if (productsApproveMatch && req.method === 'POST') {
             const id = productsApproveMatch[1];
             const product = data.products.find(p => p.id === id);
@@ -2088,7 +2306,7 @@ const server = http.createServer((req, res) => {
             return;
         }
         
-        const productsDeleteMatch = path.match(/^products\/(.+)$/);
+        const productsDeleteMatch = apiPath.match(/^products\/(.+)$/);
         if (productsDeleteMatch && req.method === 'DELETE') {
             const id = productsDeleteMatch[1];
             data.products = data.products.filter(p => p.id !== id);
@@ -2098,13 +2316,13 @@ const server = http.createServer((req, res) => {
         }
         
         // Product Orders
-        if (path === 'product-orders' && req.method === 'GET') {
+        if (apiPath === 'product-orders' && req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(data.productOrders));
             return;
         }
         
-        if (path === 'product-orders' && req.method === 'POST') {
+        if (apiPath === 'product-orders' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -2126,7 +2344,7 @@ const server = http.createServer((req, res) => {
         }
         
         // Redeem voucher
-        if (path === 'redeem-voucher' && req.method === 'POST') {
+        if (apiPath === 'redeem-voucher' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -2165,7 +2383,7 @@ const server = http.createServer((req, res) => {
         }
         
         // Save Rankings
-        if (path === 'save-rankings' && req.method === 'POST') {
+        if (apiPath === 'save-rankings' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -2183,7 +2401,7 @@ const server = http.createServer((req, res) => {
         }
         
         // POST poll vote
-        if (path === 'poll-vote' && req.method === 'POST') {
+        if (apiPath === 'poll-vote' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -2290,7 +2508,7 @@ const server = http.createServer((req, res) => {
         }
         
         // Get candle history
-        if (path === 'candle-history' && req.method === 'GET') {
+        if (apiPath === 'candle-history' && req.method === 'GET') {
             const pollId = url.searchParams.get('pollId');
             const poll = data.polls.find(p => p.id === pollId);
             if (!poll || !poll.options || poll.options.length < 2) {
@@ -2324,7 +2542,7 @@ const server = http.createServer((req, res) => {
         }
         
         // DELETE votes
-        if (path === 'votes' && req.method === 'DELETE') {
+        if (apiPath === 'votes' && req.method === 'DELETE') {
             data.votes = [];
             data.pollVotes = [];
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2333,7 +2551,7 @@ const server = http.createServer((req, res) => {
         }
         
         // Polls
-        if (path.startsWith('polls') && req.method === 'GET') {
+        if (apiPath.startsWith('polls') && req.method === 'GET') {
             let polls = data.polls.map(p => ({ 
                 ...p, 
                 votes: data.pollVotes.filter(pv => pv.pollId === p.id).length 
@@ -2353,7 +2571,7 @@ const server = http.createServer((req, res) => {
         }
         
         // Approve poll
-        const approveMatch = path.match(/^polls\/approve\/(.+)$/);
+        const approveMatch = apiPath.match(/^polls\/approve\/(.+)$/);
         if (approveMatch && req.method === 'POST') {
             const id = approveMatch[1];
             const poll = data.polls.find(p => p.id === id);
@@ -2366,7 +2584,7 @@ const server = http.createServer((req, res) => {
         }
         
         // POST poll
-        if (path === 'polls' && req.method === 'POST') {
+        if (apiPath === 'polls' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -2389,7 +2607,7 @@ const server = http.createServer((req, res) => {
         }
         
         // DELETE poll
-        const pollsMatch = path.match(/^polls\/(.+)$/);
+        const pollsMatch = apiPath.match(/^polls\/(.+)$/);
         if (pollsMatch && req.method === 'DELETE') {
             const id = pollsMatch[1];
             data.polls = data.polls.filter(p => p.id !== id);
@@ -2400,7 +2618,7 @@ const server = http.createServer((req, res) => {
         }
         
         // POST candidate
-        if (path === 'candidates' && req.method === 'POST') {
+        if (apiPath === 'candidates' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -2420,7 +2638,7 @@ const server = http.createServer((req, res) => {
         }
         
         // DELETE candidate
-        const candidatesMatch = path.match(/^candidates\/(.+)$/);
+        const candidatesMatch = apiPath.match(/^candidates\/(.+)$/);
         if (candidatesMatch && req.method === 'DELETE') {
             const id = candidatesMatch[1];
             data.candidates = data.candidates.filter(c => c.id !== id);
@@ -2431,7 +2649,7 @@ const server = http.createServer((req, res) => {
         }
         
         // Export
-        if (path === 'export' && req.method === 'GET') {
+        if (apiPath === 'export' && req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
                 candidates: data.candidates,
@@ -2444,18 +2662,23 @@ const server = http.createServer((req, res) => {
         }
         
         // Login
-        if (path === 'login' && req.method === 'POST') {
+        if (apiPath === 'login' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
                 try {
                     const { username, password } = JSON.parse(body);
-                    // Allow admin to login without password
-                    const user = data.users.find(u => u.username === username && (u.username === 'admin' || u.password === password));
-                    if (user) {
-                        const { password, ...safeUser } = user;
+                    const user = data.users.find(u => u.username === username);
+                    if (user && verifyPassword(password, user.password)) {
+                        // Migrate plaintext password to scrypt hash
+                        if (!user.password.startsWith('scrypt:')) {
+                            user.password = hashPassword(password);
+                            saveUsers();
+                        }
+                        const token = createToken(user);
+                        const { password: pwd, ...safeUser } = user;
                         res.writeHead(200, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ success: true, user: safeUser }));
+                        res.end(JSON.stringify({ success: true, user: safeUser, token }));
                     } else {
                         res.writeHead(401, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ success: false, error: 'Invalid credentials' }));
@@ -2469,12 +2692,17 @@ const server = http.createServer((req, res) => {
         }
         
         // Register
-        if (path === 'register' && req.method === 'POST') {
+        if (apiPath === 'register' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
                 try {
                     const { username, password, name } = JSON.parse(body);
+                    if (!username || !password || password.length < 6) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Username and password (min 6 chars) required' }));
+                        return;
+                    }
                     if (data.users.find(u => u.username === username)) {
                         res.writeHead(400, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ error: 'Username already exists' }));
@@ -2483,16 +2711,75 @@ const server = http.createServer((req, res) => {
                     const newUser = {
                         id: generateId(),
                         username,
-                        password,
+                        password: hashPassword(password),
                         name: name || username,
                         role: 'user',
                         createdAt: new Date().toISOString()
                     };
                     data.users.push(newUser);
                     saveUsers();
+                    const token = createToken(newUser);
                     const { password: pwd, ...safeUser } = newUser;
                     res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: true, user: safeUser }));
+                    res.end(JSON.stringify({ success: true, user: safeUser, token }));
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+            });
+            return;
+        }
+
+        // OAuth status
+        if (apiPath === 'oauth-status' && req.method === 'GET') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(Object.entries(OAUTH_CONFIG).map(([name, cfg]) => ({ name, enabled: cfg.enabled }))));
+            return;
+        }
+        
+        // Get current user info
+        if (apiPath === 'current-user' && req.method === 'GET') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ message: 'Use login endpoint' }));
+            return;
+        }
+
+        // Poll Chat - GET messages
+        if (apiPath.startsWith('poll-chat/') && req.method === 'GET') {
+            const pollId = apiPath.slice(10);
+            const messages = data.pollChats[pollId] || [];
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(messages));
+            return;
+        }
+
+        // Poll Chat - POST message
+        if (apiPath === 'poll-chat' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const { pollId, userId, userName, text } = JSON.parse(body);
+                    if (!pollId || !userId || !text || !text.trim()) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'pollId, userId and text required' }));
+                        return;
+                    }
+                    if (!data.pollChats[pollId]) data.pollChats[pollId] = [];
+                    const msg = {
+                        id: generateId(),
+                        userId,
+                        userName: userName || 'Anonymous',
+                        text: text.trim().slice(0, 500),
+                        timestamp: new Date().toISOString()
+                    };
+                    data.pollChats[pollId].push(msg);
+                    // Keep last 200 messages per poll
+                    if (data.pollChats[pollId].length > 200) {
+                        data.pollChats[pollId] = data.pollChats[pollId].slice(-200);
+                    }
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true, message: msg }));
                 } catch (e) {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ error: e.message }));
@@ -2501,24 +2788,26 @@ const server = http.createServer((req, res) => {
             return;
         }
         
-        // Get current user info
-        if (path === 'current-user' && req.method === 'GET') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ message: 'Use login endpoint' }));
-            return;
-        }
-        
         // Logo
-        if (path === 'logo' && req.method === 'GET') {
-            const logoPath = '/Users/raymondturing/Desktop/img_7645.jpeg';
-            try {
-                const logoData = fs.readFileSync(logoPath);
-                res.writeHead(200, { 'Content-Type': 'image/jpeg' });
-                res.end(logoData);
-            } catch (e) {
-                res.writeHead(404);
-                res.end('Logo not found: ' + e.message);
+        if (apiPath === 'logo' && req.method === 'GET') {
+            const logoPaths = [
+                path.join(__dirname, 'web', 'logo.jpeg'),
+                path.join(__dirname, 'web', 'datatoalha', 'logo.jpeg'),
+                path.join(DATA_DIR, 'logo.jpeg'),
+                '/Users/raymondturing/Desktop/img_7645.jpeg'
+            ];
+            for (const logoPath of logoPaths) {
+                try {
+                    if (fs.existsSync(logoPath)) {
+                        const logoData = fs.readFileSync(logoPath);
+                        res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+                        res.end(logoData);
+                        return;
+                    }
+                } catch (e) {}
             }
+            res.writeHead(404);
+            res.end('Logo not found');
             return;
         }
         
@@ -2527,11 +2816,36 @@ const server = http.createServer((req, res) => {
         return;
     }
     
+    // Serve logo at /logo (outside /api)
+    if (url.pathname === '/logo') {
+        const logoPaths = [
+            path.join(__dirname, 'web', 'logo.jpeg'),
+            path.join(__dirname, 'web', 'datatoalha', 'logo.jpeg'),
+            path.join(DATA_DIR, 'logo.jpeg'),
+            '/Users/raymondturing/Desktop/img_7645.jpeg'
+        ];
+        for (const logoPath of logoPaths) {
+            try {
+                if (fs.existsSync(logoPath)) {
+                    const logoData = fs.readFileSync(logoPath);
+                    res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+                    res.end(logoData);
+                    return;
+                }
+            } catch (e) {}
+        }
+        res.writeHead(404);
+        res.end('Logo not found');
+        return;
+    }
+
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(html);
 });
 
 loadData();
-server.listen(PORT, () => {
-    console.log('Data Toalha Web App running at http://localhost:' + PORT);
+server.listen(PORT, HOST, () => {
+    console.log('Data Toalha Web App v2.0 running at http://' + HOST + ':' + PORT);
+    console.log('Password encryption: scrypt (N=' + SCRYPT_COST + ', keylen=' + SCRYPT_KEYLEN + ')');
+    console.log('OAuth providers: ' + Object.entries(OAUTH_CONFIG).map(([k,v]) => k + '=' + (v.enabled ? 'ON' : 'ready')).join(', '));
 });

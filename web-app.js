@@ -962,7 +962,7 @@ const html = `
                     <input type="text" id="loginUsername" placeholder="E-mail ou nome de usuário" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" style="text-align:center;">
                 </div>
                 <div class="form-group">
-                    <input type="password" id="loginPassword" placeholder="Senha" autocomplete="current-password" style="text-align:center;">
+                    <div style="position:relative;"><input type="password" id="loginPassword" placeholder="Senha" autocomplete="current-password" style="text-align:center;padding-right:44px;width:100%;"><button type="button" onclick="var p=document.getElementById('loginPassword');p.type=p.type==='password'?'text':'password';this.textContent=p.type==='password'?'👁':'🙈';" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:18px;cursor:pointer;padding:4px;">👁</button></div>
                 </div>
                 <button class="btn" onclick="doLogin()" style="width:100%;">Entrar</button>
                 <div style="margin-top:14px;">
@@ -982,7 +982,7 @@ const html = `
                     <input type="text" id="regUsername" placeholder="Nome de usuário" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" style="text-align:center;">
                 </div>
                 <div class="form-group">
-                    <input type="password" id="regPassword" placeholder="Senha (mín. 6 caracteres)" autocomplete="new-password" style="text-align:center;">
+                    <div style="position:relative;"><input type="password" id="regPassword" placeholder="Senha (mín. 6 caracteres)" autocomplete="new-password" style="text-align:center;padding-right:44px;width:100%;"><button type="button" onclick="var p=document.getElementById('regPassword');p.type=p.type==='password'?'text':'password';this.textContent=p.type==='password'?'👁':'🙈';" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:18px;cursor:pointer;padding:4px;">👁</button></div>
                 </div>
                 <button class="btn" onclick="doRegister()" style="width:100%;">Criar conta</button>
             </div>
@@ -1007,10 +1007,11 @@ const html = `
                     Verifique seu e-mail e digite o código de 6 dígitos abaixo, junto com sua nova senha.
                 </p>
                 <div class="form-group">
-                    <input type="text" id="resetCode" placeholder="Código (6 dígitos)" inputmode="numeric" maxlength="6" autocomplete="one-time-code" style="text-align:center;letter-spacing:0.4em;font-family:'Geist Mono',monospace;">
+                    <input type="text" id="resetCode" placeholder="Código (6 dígitos)" inputmode="numeric" maxlength="10" autocomplete="one-time-code" style="text-align:center;letter-spacing:0.4em;font-family:'Geist Mono',monospace;" oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)">
                 </div>
-                <div class="form-group">
-                    <input type="password" id="resetNewPassword" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" style="text-align:center;">
+                <div class="form-group" style="position:relative;">
+                    <input type="password" id="resetNewPassword" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" style="text-align:center;padding-right:44px;">
+                    <button type="button" onclick="var p=document.getElementById('resetNewPassword');p.type=p.type==='password'?'text':'password';this.textContent=p.type==='password'?'👁':'🙈';" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:18px;cursor:pointer;padding:4px;">👁</button>
                 </div>
                 <button class="btn" onclick="doResetPassword()" style="width:100%;">Definir nova senha</button>
                 <div style="margin-top:14px;">
@@ -4410,11 +4411,11 @@ const html = `
             var codeEl = document.getElementById('resetCode');
             var pwEl = document.getElementById('resetNewPassword');
             var emailEl = document.getElementById('forgotEmail');
-            var code = codeEl ? (codeEl.value || '').trim() : '';
+            var code = codeEl ? (codeEl.value || '').replace(/[^0-9]/g, '') : '';
             var newPassword = pwEl ? pwEl.value : '';
             var email = emailEl ? (emailEl.value || '').trim() : '';
             if (!email) { showAuthError('Volte e digite seu e-mail primeiro'); return; }
-            if (!/^\d{6}$/.test(code)) { showAuthError('Codigo deve ter 6 digitos'); return; }
+            if (code.length !== 6) { showAuthError('Codigo deve ter 6 digitos numericos'); return; }
             if (!newPassword || newPassword.length < 6) { showAuthError('Senha deve ter no minimo 6 caracteres'); return; }
             var err = document.getElementById('authError');
             err.style.color = 'var(--c-text-mute)';

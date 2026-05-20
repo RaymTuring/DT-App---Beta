@@ -48,6 +48,12 @@ const OAUTH_CONFIG = {
 // Email verification config
 const EMAIL_VERIFY_ENABLED = process.env.DT_EMAIL_VERIFY !== 'false'; // default: on
 
+// Reserved usernames — admin can manage via SOC-Watcher set_reserved_usernames action
+let _reservedUsernames = [];
+const RESERVED_FILE = path.join(process.env.HOME || '/Users/raymondturing', 'Library/Application Support/DataToalha/reserved_usernames.json');
+try { _reservedUsernames = JSON.parse(fs.readFileSync(RESERVED_FILE, 'utf8')); } catch(_) { _reservedUsernames = ['admin', 'administrator', 'datatoalha', 'moderador', 'suporte', 'support', 'system', 'oficial', 'root']; }
+function isReservedUsername(name) { return _reservedUsernames.some(r => r.toLowerCase() === (name || '').toLowerCase()); }
+
 // Password hashing with scrypt
 function isValidEmail(s) {
   if (typeof s !== 'string') return false;
@@ -1350,7 +1356,7 @@ const html = `
                 <h3>Editar perfil</h3>
                 <div style="display:flex;flex-direction:column;gap:10px;">
                     <div class="form-group"><label>Nome</label><input type="text" id="editProfileName" placeholder="Seu nome"></div>
-                    <div class="form-group"><label>Username</label><input type="text" id="editProfileUsername" disabled style="opacity:0.5;cursor:not-allowed;"><span style="font-size:11px;color:var(--c-text-mute);">Username nao pode ser alterado</span></div>
+                    <div class="form-group"><label>Username</label><input type="text" id="editProfileUsername" placeholder="Username"></div>
                     <button class="btn" onclick="saveProfile()">Salvar alteracoes</button>
                     <p id="profileStatus" style="font-size:12px;margin:0;"></p>
                 </div>
@@ -4183,15 +4189,18 @@ const html = `
         }
         async function saveProfile() {
             var name = (document.getElementById('editProfileName').value || '').trim();
+            var username = (document.getElementById('editProfileUsername').value || '').trim();
             var status = document.getElementById('profileStatus');
             if (!name) { status.style.color = '#ff4444'; status.textContent = 'Nome obrigatorio'; return; }
             status.style.color = 'var(--c-text-mute)'; status.textContent = 'Salvando...';
-            var result = await api('/update-profile', 'PUT', { name: name });
+            var result = await api('/update-profile', 'PUT', { name: name, username: username });
             if (result && result.success) {
                 status.style.color = '#4caf50'; status.textContent = 'Perfil atualizado!';
                 currentUser.name = name;
+                if (result.user && result.user.username) currentUser.username = result.user.username;
                 document.getElementById('currentUserName').textContent = name;
                 document.getElementById('accountName').textContent = name;
+                if (result.user) document.getElementById('accountUsername').textContent = result.user.username;
                 setTimeout(function() { status.textContent = ''; }, 2000);
             } else {
                 status.style.color = '#ff4444'; status.textContent = (result && result.error) || 'Erro ao salvar';
@@ -4617,12 +4626,19 @@ const server = http.createServer(async (req, res) => {
         req.on('data', c => { body += c; if (body.length > MAX_BODY) { req.destroy(); } });
         req.on('end', () => {
             try {
-                const { name } = JSON.parse(body);
+                const { name, username } = JSON.parse(body);
                 const userId = session.userId || session.id;
                 const user = data.users.find(u => u.id === userId);
                 if (!user) { res.writeHead(404, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Usuario nao encontrado'})); return; }
-                if (!name || !name.trim()) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Nome obrigatorio'})); return; }
-                user.name = name.trim();
+                if (name && name.trim()) user.name = name.trim();
+                if (username && username.trim() && username.trim() !== user.username) {
+                    const newUn = username.trim();
+                    if (isReservedUsername(newUn)) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Este username e reservado'})); return; }
+                    if (data.users.find(u => u.username === newUn && u.id !== userId)) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Username ja em uso'})); return; }
+                    // Check if admin locked the username (user cannot revert to admin-changed-from name)
+                    if (user._lockedFromUsername && newUn.toLowerCase() === user._lockedFromUsername.toLowerCase()) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Este username foi revogado pelo admin'})); return; }
+                    user.username = newUn;
+                }
                 saveUsers();
                 res.writeHead(200, {'Content-Type':'application/json'});
                 res.end(JSON.stringify({success:true, user:{id:user.id, name:user.name, username:user.username, email:user.email, role:user.role}}));
@@ -4828,6 +4844,9 @@ const server = http.createServer(async (req, res) => {
                 else if (action === 'set_trending_keywords') { if(!Array.isArray(cmd.keywords)){result={error:'keywords must be array'};}else{data.trendingKeywords=cmd.keywords;result={success:true};} }
                 else if (action === 'set_poll_rankings') { if(!cmd.rankings||typeof cmd.rankings!=='object'){result={error:'rankings object required'};}else{data.pollRankings=cmd.rankings;result={success:true};} }
                 else if (action === 'clear_votes') { if(cmd.confirm!==true){result={error:'Pass confirm:true'};}else{data.votes=[];data.pollVotes=[];result={success:true,message:'All votes cleared'};} }
+                else if (action === 'change_username') { const u=data.users.find(x=>x.id===cmd.userId||x.username===cmd.oldUsername); if(!u){result={error:'User not found'};} else if(!cmd.newUsername){result={error:'newUsername required'};} else { const old=u.username; u._lockedFromUsername=old; u.username=cmd.newUsername.trim(); _reservedUsernames.push(old); try{fs.writeFileSync(RESERVED_FILE,JSON.stringify(_reservedUsernames,null,2));}catch(_){} saveUsers(); result={success:true,old:old,new:u.username,locked:old}; } }
+                else if (action === 'set_reserved_usernames') { if(!Array.isArray(cmd.usernames)){result={error:'usernames array required'};}else{_reservedUsernames=cmd.usernames; try{fs.writeFileSync(RESERVED_FILE,JSON.stringify(_reservedUsernames,null,2));}catch(_){} result={success:true,reserved:_reservedUsernames};} }
+                else if (action === 'get_reserved_usernames') { result = _reservedUsernames; }
                 res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify(result));
             } catch(e) { res.writeHead(400,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:e.message})); }
         });
@@ -5591,6 +5610,11 @@ const server = http.createServer(async (req, res) => {
                     if (!isValidEmail(email)) {
                         res.writeHead(400, { 'Content-Type': 'application/json' });
                         res.end(JSON.stringify({ error: 'E-mail inválido' }));
+                        return;
+                    }
+                    if (isReservedUsername(username)) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Este nome de usuario e reservado' }));
                         return;
                     }
                     if (data.users.find(u => u.username === username)) {

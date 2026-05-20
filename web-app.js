@@ -1347,6 +1347,16 @@ const html = `
             </div>
 
             <div class="card">
+                <h3>Editar perfil</h3>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    <div class="form-group"><label>Nome</label><input type="text" id="editProfileName" placeholder="Seu nome"></div>
+                    <div class="form-group"><label>Username</label><input type="text" id="editProfileUsername" placeholder="Username"></div>
+                    <button class="btn" onclick="saveProfile()">Salvar alteracoes</button>
+                    <p id="profileStatus" style="font-size:12px;margin:0;"></p>
+                </div>
+            </div>
+
+            <div class="card">
                 <h3>Privacidade e termos</h3>
                 <p style="color:var(--c-text-mute);font-size:14px;line-height:1.6;margin-bottom:14px;">
                     Leia como tratamos seus dados e os termos de uso do aplicativo.
@@ -4101,7 +4111,7 @@ const html = `
             await api('/poll-chat', 'POST', {
                 pollId: pollId,
                 userId: currentUser.id,
-                userName: currentUser.name,
+                userName: currentUser.username || currentUser.name,
                 text: text
             });
             loadPollChat(pollId);
@@ -4165,7 +4175,29 @@ const html = `
             // Hide password field for Apple Sign In users
             var pwGroup = document.getElementById('deletePasswordGroup');
             if (pwGroup) pwGroup.style.display = u.appleId ? 'none' : 'block';
+            // Populate edit fields
+            var eName = document.getElementById('editProfileName');
+            var eUser = document.getElementById('editProfileUsername');
+            if (eName) eName.value = u.name || '';
+            if (eUser) eUser.value = u.username || '';
         }
+        async function saveProfile() {
+            var name = (document.getElementById('editProfileName').value || '').trim();
+            var username = (document.getElementById('editProfileUsername').value || '').trim();
+            var status = document.getElementById('profileStatus');
+            if (!name || !username) { status.style.color = '#ff4444'; status.textContent = 'Nome e username obrigatorios'; return; }
+            status.style.color = 'var(--c-text-mute)'; status.textContent = 'Salvando...';
+            var result = await api('/update-profile', 'PUT', { name: name, username: username });
+            if (result && result.success) {
+                status.style.color = '#4caf50'; status.textContent = 'Perfil atualizado!';
+                currentUser.name = name; currentUser.username = username;
+                document.getElementById('currentUserName').textContent = name;
+                document.getElementById('accountName').textContent = name;
+                document.getElementById('accountUsername').textContent = username;
+                setTimeout(function() { status.textContent = ''; }, 2000);
+            } else {
+                status.style.color = '#ff4444'; status.textContent = (result && result.error) || 'Erro ao salvar';
+            }
         // In-app privacy/terms viewer
         async function showInAppPage(page) {
             try {
@@ -4579,6 +4611,32 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // === Update profile ===
+    if (url.pathname === '/api/update-profile' && req.method === 'PUT') {
+        const session = await getSession(req);
+        if (!session) { res.writeHead(401, {'Content-Type':'application/json'}); return res.end(JSON.stringify({error:'Nao autorizado'})); }
+        let body = '';
+        req.on('data', c => { body += c; if (body.length > MAX_BODY) { req.destroy(); } });
+        req.on('end', () => {
+            try {
+                const { name, username } = JSON.parse(body);
+                const userId = session.userId || session.id;
+                const user = data.users.find(u => u.id === userId);
+                if (!user) { res.writeHead(404, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Usuario nao encontrado'})); return; }
+                if (username && username !== user.username) {
+                    const taken = data.users.find(u => u.username === username && u.id !== userId);
+                    if (taken) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Username ja em uso'})); return; }
+                    user.username = username.trim();
+                }
+                if (name) user.name = name.trim();
+                saveUsers();
+                res.writeHead(200, {'Content-Type':'application/json'});
+                res.end(JSON.stringify({success:true, user:{id:user.id, name:user.name, username:user.username, email:user.email, role:user.role}}));
+            } catch(e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:e.message})); }
+        });
+        return;
+    }
+
     // === Account deletion (Apple App Store Guideline 5.1.1(v)) ===
     if (url.pathname === '/api/account/delete' && req.method === 'POST') {
         const session = await getSession(req);
@@ -4611,6 +4669,14 @@ const server = http.createServer(async (req, res) => {
                 data.polls = (data.polls||[]).filter(p => p.createdBy !== userId && p.userId !== userId);
                 data.products = (data.products||[]).filter(p => p.sellerId !== userId && p.userId !== userId);
                 data.vouchers = (data.vouchers||[]).filter(v => v.userId !== userId && v.recipientUserId !== userId);
+                // Anonymize chat messages — keep content but mark user as deleted
+                if (data.pollChats) {
+                    Object.keys(data.pollChats).forEach(function(pid) {
+                        (data.pollChats[pid] || []).forEach(function(msg) {
+                            if (msg.userId === userId) { msg.userName = 'usuario excluido'; msg.userId = 'deleted'; }
+                        });
+                    });
+                }
                 data.users = data.users.filter(u => u.id !== userId);
                 if (typeof saveUsers === 'function') saveUsers();
                 if (typeof saveAllData === 'function') saveAllData();

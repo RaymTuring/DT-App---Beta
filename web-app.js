@@ -2,6 +2,8 @@
 const http = require('http');
 const PY_SEND_RESET_EMAIL = 'import sys, json, smtplib, ssl\nfrom email.message import EmailMessage\npayload = json.loads(sys.stdin.read())\nSMTP_USER = "metaverso.uk@gmail.com"\nSMTP_PASS = "mkyc apht psak iwei"\nto_addr = payload["to"]\ncode = payload["code"]\nname = payload.get("name") or to_addr.split("@")[0]\nmsg = EmailMessage()\nmsg["From"] = "DataToalha <" + SMTP_USER + ">"\nmsg["To"] = to_addr\nmsg["Subject"] = "Codigo para redefinir sua senha - DataToalha"\nmsg.set_content("Ola " + name + ",\\n\\nSeu codigo para redefinir a senha do DataToalha e:\\n\\n    " + code + "\\n\\nValido por 30 minutos. Se voce nao solicitou, ignore este e-mail.\\n\\nDataToalha\\nhttps://datatoalha.com")\nmsg.add_alternative(\n    "<div style=\\"font-family:-apple-system,Inter,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#06060F;color:#F4F4FB;\\">"\n    "<h2 style=\\"font-family:Inter,sans-serif;font-weight:800;font-size:22px;background:linear-gradient(135deg,#5EE9FF,#B14AFF);-webkit-background-clip:text;background-clip:text;color:transparent;margin:0 0 16px;\\">DataToalha</h2>"\n    "<p style=\\"font-size:14px;color:#9799BD;margin:0 0 8px;\\">Ola " + name + ",</p>"\n    "<p style=\\"font-size:14px;color:#F4F4FB;line-height:1.5;margin:0 0 24px;\\">Use o codigo abaixo para redefinir a senha da sua conta:</p>"\n    "<div style=\\"font-family:ui-monospace,Menlo,monospace;font-size:32px;letter-spacing:0.4em;font-weight:800;text-align:center;padding:16px;background:rgba(0,240,255,0.08);border:1px solid rgba(0,240,255,0.30);border-radius:14px;color:#5EE9FF;margin:0 0 24px;\\">" + code + "</div>"\n    "<p style=\\"font-size:12px;color:#6B6E91;line-height:1.5;margin:0;\\">Codigo valido por 30 minutos. Se voce nao solicitou, ignore este e-mail.</p>"\n    "</div>",\n    subtype="html"\n)\nctx = ssl.create_default_context()\nwith smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as s:\n    s.starttls(context=ctx)\n    s.login(SMTP_USER, SMTP_PASS)\n    s.send_message(msg)\nprint("ok")\n';
 
+const PY_SEND_VERIFY_EMAIL = 'import sys, json, smtplib, ssl\nfrom email.message import EmailMessage\npayload = json.loads(sys.stdin.read())\nSMTP_USER = "metaverso.uk@gmail.com"\nSMTP_PASS = "mkyc apht psak iwei"\nto_addr = payload["to"]\ncode = payload["code"]\nname = payload.get("name") or to_addr.split("@")[0]\nmsg = EmailMessage()\nmsg["From"] = "DataToalha <" + SMTP_USER + ">"\nmsg["To"] = to_addr\nmsg["Subject"] = "Confirme seu e-mail - DataToalha"\nmsg.set_content("Ola " + name + ",\\n\\nSeu codigo de verificacao do DataToalha e:\\n\\n    " + code + "\\n\\nValido por 24 horas.\\n\\nDataToalha\\nhttps://datatoalha.com")\nmsg.add_alternative(\n    "<div style=\\"font-family:-apple-system,Inter,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#06060F;color:#F4F4FB;\\">"\n    "<h2 style=\\"font-family:Inter,sans-serif;font-weight:800;font-size:22px;background:linear-gradient(135deg,#5EE9FF,#B14AFF);-webkit-background-clip:text;background-clip:text;color:transparent;margin:0 0 16px;\\">DataToalha</h2>"\n    "<p style=\\"font-size:14px;color:#9799BD;margin:0 0 8px;\\">Bem-vindo(a) " + name + "!</p>"\n    "<p style=\\"font-size:14px;color:#F4F4FB;line-height:1.5;margin:0 0 24px;\\">Use o codigo abaixo para confirmar seu e-mail:</p>"\n    "<div style=\\"font-family:ui-monospace,Menlo,monospace;font-size:32px;letter-spacing:0.4em;font-weight:800;text-align:center;padding:16px;background:rgba(0,240,255,0.08);border:1px solid rgba(0,240,255,0.30);border-radius:14px;color:#5EE9FF;margin:0 0 24px;\\">" + code + "</div>"\n    "<p style=\\"font-size:12px;color:#6B6E91;line-height:1.5;margin:0;\\">Codigo valido por 24 horas. Se voce nao criou esta conta, ignore este e-mail.</p>"\n    "</div>",\n    subtype="html"\n)\nctx = ssl.create_default_context()\nwith smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as s:\n    s.starttls(context=ctx)\n    s.login(SMTP_USER, SMTP_PASS)\n    s.send_message(msg)\nprint("ok")\n';
+
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -30,12 +32,21 @@ function verifyTotp(secret, token) {
     return false;
 }
 
-// OAuth Config (placeholders - set env vars for production)
+// OAuth Config
 const OAUTH_CONFIG = {
   google: { clientId: process.env.GOOGLE_CLIENT_ID || '', enabled: !!process.env.GOOGLE_CLIENT_ID },
-  apple: { clientId: process.env.APPLE_CLIENT_ID || '', enabled: !!process.env.APPLE_CLIENT_ID },
+  apple: {
+    clientId: process.env.APPLE_CLIENT_ID || '',
+    teamId: process.env.APPLE_TEAM_ID || '',
+    keyId: process.env.APPLE_KEY_ID || '',
+    privateKey: process.env.APPLE_PRIVATE_KEY || '',
+    redirectUri: process.env.APPLE_REDIRECT_URI || 'https://datatoalha.com/api/auth/apple/callback',
+    enabled: !!(process.env.APPLE_CLIENT_ID && process.env.APPLE_TEAM_ID)
+  },
   facebook: { clientId: process.env.FACEBOOK_APP_ID || '', enabled: !!process.env.FACEBOOK_APP_ID }
 };
+// Email verification config
+const EMAIL_VERIFY_ENABLED = process.env.DT_EMAIL_VERIFY !== 'false'; // default: on
 
 // Password hashing with scrypt
 function isValidEmail(s) {
@@ -3868,16 +3879,69 @@ const html = `
                 body: JSON.stringify({ username, email, password, name: name || username })
             })
             .then(res => res.json())
-            .then(data => {
-                if (data.success) { handleAuthSuccess(data); }
-                else { showAuthError(data.error || 'Erro ao registrar'); }
+            .then(result => {
+                if (result.success && result.user && result.user.needsVerification) {
+                    // Show verification overlay instead of logging in
+                    handleAuthSuccess(result);
+                    showEmailVerification(result.user.email);
+                } else if (result.success) {
+                    handleAuthSuccess(result);
+                } else {
+                    showAuthError(result.error || 'Erro ao registrar');
+                }
             })
             .catch(e => showAuthError('Erro de conexao: ' + e.message));
+        }
+
+        function showEmailVerification(email) {
+            var overlay = document.getElementById('verifyEmailOverlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'verifyEmailOverlay';
+                overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(6,6,15,0.95);z-index:10000;display:flex;align-items:center;justify-content:center;';
+                overlay.innerHTML = '<div style="background:var(--c-surface,#1a1a2e);border-radius:16px;padding:32px;max-width:380px;width:90%;text-align:center;">' +
+                    '<h2 style="color:var(--c-text,#f4f4fb);margin:0 0 8px;">Confirme seu e-mail</h2>' +
+                    '<p style="color:var(--c-text-mute,#9799bd);font-size:13px;margin:0 0 20px;" id="verifyEmailMsg">Enviamos um codigo de 6 digitos para <strong id="verifyEmailAddr"></strong></p>' +
+                    '<input type="text" id="verifyCodeInput" maxlength="6" placeholder="000000" style="font-size:28px;letter-spacing:0.3em;text-align:center;width:100%;padding:12px;border:2px solid var(--c-border,#333);border-radius:12px;background:rgba(6,6,15,0.6);color:var(--c-text,#f4f4fb);margin:0 0 16px;">' +
+                    '<button class="btn" style="width:100%;margin:0 0 10px;" onclick="submitEmailVerification()">Verificar</button>' +
+                    '<button class="btn btn-secondary" style="width:100%;font-size:12px;" onclick="resendVerification()">Reenviar codigo</button>' +
+                    '<p id="verifyStatus" style="color:var(--c-text-mute);font-size:12px;margin:8px 0 0;"></p>' +
+                    '</div>';
+                document.body.appendChild(overlay);
+            }
+            overlay.style.display = 'flex';
+            document.getElementById('verifyEmailAddr').textContent = email;
+            window._verifyEmail = email;
+        }
+        function submitEmailVerification() {
+            var code = (document.getElementById('verifyCodeInput').value || '').trim();
+            var status = document.getElementById('verifyStatus');
+            if (code.length !== 6) { status.style.color = '#ff4444'; status.textContent = 'Digite o codigo de 6 digitos'; return; }
+            status.style.color = 'var(--c-text-mute)'; status.textContent = 'Verificando...';
+            api('/verify-email', 'POST', { email: window._verifyEmail, code: code }).then(function(r) {
+                if (r && r.success) {
+                    status.style.color = '#4caf50'; status.textContent = 'E-mail confirmado!';
+                    setTimeout(function() { var o = document.getElementById('verifyEmailOverlay'); if(o) o.style.display='none'; }, 1500);
+                } else {
+                    status.style.color = '#ff4444'; status.textContent = (r && r.error) || 'Erro';
+                }
+            });
+        }
+        function resendVerification() {
+            var status = document.getElementById('verifyStatus');
+            status.style.color = 'var(--c-text-mute)'; status.textContent = 'Reenviando...';
+            api('/resend-verification', 'POST', { email: window._verifyEmail }).then(function(r) {
+                status.style.color = '#4caf50'; status.textContent = 'Codigo reenviado! Verifique sua caixa de entrada.';
+            });
         }
 
         function oauthLogin(provider) {
             const label = provider.charAt(0).toUpperCase() + provider.slice(1);
             const pretty = label === 'Apple' ? 'Apple' : label === 'Google' ? 'Google' : 'Facebook';
+            if (provider === 'apple') {
+                window.location.href = BASE + '/api/auth/apple';
+                return;
+            }
             showAuthError('Login com ' + pretty + ' chega em breve. Use e-mail e senha por enquanto.');
         }
         async function refreshOAuthState() {
@@ -3923,6 +3987,31 @@ const html = `
         // Honor #register in the URL — landing's "Criar conta gratis" CTA
         // navigates to /app#register so the register tab is pre-selected.
         if (typeof refreshOAuthState === 'function') refreshOAuthState();
+
+        // Auto-login from stored token (Apple Sign In callback, or returning user)
+        (function tryAutoLogin() {
+            var storedToken = localStorage.getItem('dt_app_token');
+            if (!storedToken || currentUser) return;
+            fetch(BASE + '/api/current-user', { headers: { 'Authorization': 'Bearer ' + storedToken } })
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(user) {
+                    if (user && user.id) {
+                        authToken = storedToken;
+                        currentUser = user;
+                        document.getElementById('loginOverlay').style.display = 'none';
+                        document.getElementById('appContent').style.display = 'block';
+                        document.getElementById('currentUserName').textContent = user.name;
+                        if (user.role === 'admin') {
+                            document.body.classList.add('admin-mode');
+                            var adminBtn = document.getElementById('adminMenuBtn');
+                            if (adminBtn) adminBtn.style.display = 'block';
+                        }
+                        showSection('home');
+                    }
+                })
+                .catch(function() { /* token invalid or expired — stay on login */ });
+        })();
+
         if (window.location.hash === '#register') {
             switchAuthTab('register');
             try { history.replaceState(null, '', window.location.pathname); } catch (_) {}
@@ -5433,6 +5522,7 @@ const server = http.createServer(async (req, res) => {
                         res.end(JSON.stringify({ error: 'E-mail já cadastrado' }));
                         return;
                     }
+                    const verifyCode = Math.floor(100000 + Math.random() * 900000).toString();
                     const newUser = {
                         id: generateId(),
                         username,
@@ -5440,12 +5530,24 @@ const server = http.createServer(async (req, res) => {
                         password: hashPassword(password),
                         name: name || username,
                         role: 'user',
+                        emailVerified: !EMAIL_VERIFY_ENABLED,
+                        verifyCode: EMAIL_VERIFY_ENABLED ? verifyCode : null,
+                        verifyExpiresAt: EMAIL_VERIFY_ENABLED ? Date.now() + 24 * 60 * 60 * 1000 : null,
                         createdAt: new Date().toISOString()
                     };
                     data.users.push(newUser);
                     saveUsers();
+                    // Send verification email
+                    if (EMAIL_VERIFY_ENABLED) {
+                        try {
+                            const { execSync } = require('child_process');
+                            const pyPayload = JSON.stringify({ to: newUser.email, code: verifyCode, name: newUser.name });
+                            execSync('python3 -c ' + JSON.stringify(PY_SEND_VERIFY_EMAIL), { input: pyPayload, timeout: 20000, stdio: ['pipe', 'pipe', 'pipe'] });
+                        } catch (emailErr) { console.log('[VERIFY] email send error:', emailErr.message); }
+                    }
                     const token = createToken(newUser);
-                    const { password: pwd, ...safeUser } = newUser;
+                    const { password: pwd, verifyCode: vc, ...safeUser } = newUser;
+                    safeUser.needsVerification = EMAIL_VERIFY_ENABLED;
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ success: true, user: safeUser, token }));
                 } catch (e) {
@@ -5456,17 +5558,161 @@ const server = http.createServer(async (req, res) => {
             return;
         }
 
-        // OAuth status
-        if (apiPath === 'oauth-status' && req.method === 'GET') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(Object.entries(OAUTH_CONFIG).map(([name, cfg]) => ({ name, enabled: cfg.enabled }))));
+        // Verify email
+        if (apiPath === 'verify-email' && req.method === 'POST') {
+            let body = '';
+            req.on('data', c => { body += c; if (body.length > MAX_BODY) { req.destroy(); } });
+            req.on('end', () => {
+                try {
+                    const { email, code } = JSON.parse(body);
+                    const user = data.users.find(u => u.email === (email || '').toLowerCase());
+                    if (!user) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Usuario nao encontrado'})); return; }
+                    if (user.emailVerified) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true, message:'E-mail ja verificado'})); return; }
+                    if (!user.verifyCode || user.verifyExpiresAt < Date.now()) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Codigo expirado. Solicite um novo.'})); return; }
+                    if (user.verifyCode !== code) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Codigo incorreto'})); return; }
+                    user.emailVerified = true;
+                    delete user.verifyCode;
+                    delete user.verifyExpiresAt;
+                    saveUsers();
+                    res.writeHead(200, {'Content-Type':'application/json'});
+                    res.end(JSON.stringify({success:true, message:'E-mail confirmado!'}));
+                } catch(e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:e.message})); }
+            });
             return;
         }
-        
+
+        // Resend verification email
+        if (apiPath === 'resend-verification' && req.method === 'POST') {
+            if (rateLimit(clientIp, 'resend-verify', 2)) {
+                res.writeHead(429, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Aguarde 1 minuto'})); return;
+            }
+            let body = '';
+            req.on('data', c => { body += c; if (body.length > MAX_BODY) { req.destroy(); } });
+            req.on('end', () => {
+                try {
+                    const { email } = JSON.parse(body);
+                    const user = data.users.find(u => u.email === (email || '').toLowerCase());
+                    if (!user || user.emailVerified) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true})); return; }
+                    const newCode = Math.floor(100000 + Math.random() * 900000).toString();
+                    user.verifyCode = newCode;
+                    user.verifyExpiresAt = Date.now() + 24 * 60 * 60 * 1000;
+                    saveUsers();
+                    try {
+                        const { execSync } = require('child_process');
+                        execSync('python3 -c ' + JSON.stringify(PY_SEND_VERIFY_EMAIL), { input: JSON.stringify({to:user.email, code:newCode, name:user.name}), timeout:20000, stdio:['pipe','pipe','pipe'] });
+                    } catch(e) { console.log('[VERIFY] resend error:', e.message); }
+                    res.writeHead(200, {'Content-Type':'application/json'});
+                    res.end(JSON.stringify({success:true, message:'Codigo reenviado'}));
+                } catch(e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:e.message})); }
+            });
+            return;
+        }
+
+        // OAuth status
+        if (apiPath === 'oauth-status' && req.method === 'GET') {
+            const providers = Object.entries(OAUTH_CONFIG).map(([name, cfg]) => ({ name, enabled: cfg.enabled }));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(providers));
+            return;
+        }
+
+        // Also serve on auth/providers (client compat)
+        if (apiPath === 'auth/providers' && req.method === 'GET') {
+            const providers = Object.entries(OAUTH_CONFIG).map(([name, cfg]) => ({ name, enabled: cfg.enabled }));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ providers }));
+            return;
+        }
+
+        // Sign in with Apple — initiate
+        if (apiPath === 'auth/apple' && req.method === 'GET') {
+            if (!OAUTH_CONFIG.apple.enabled) {
+                res.writeHead(400, {'Content-Type':'application/json'});
+                res.end(JSON.stringify({error:'Apple Sign In not configured. Set APPLE_CLIENT_ID + APPLE_TEAM_ID env vars.'}));
+                return;
+            }
+            const state = crypto.randomBytes(16).toString('hex');
+            const params = new URLSearchParams({
+                client_id: OAUTH_CONFIG.apple.clientId,
+                redirect_uri: OAUTH_CONFIG.apple.redirectUri,
+                response_type: 'code id_token',
+                response_mode: 'form_post',
+                scope: 'name email',
+                state: state
+            });
+            res.writeHead(302, { 'Location': 'https://appleid.apple.com/auth/authorize?' + params.toString() });
+            res.end();
+            return;
+        }
+
+        // Sign in with Apple — callback (Apple POSTs id_token + code)
+        if (apiPath === 'auth/apple/callback' && req.method === 'POST') {
+            let body = '';
+            req.on('data', c => { body += c; if (body.length > MAX_BODY) { req.destroy(); } });
+            req.on('end', () => {
+                try {
+                    const params = new URLSearchParams(body);
+                    const idToken = params.get('id_token');
+                    if (!idToken) { res.writeHead(400, {'Content-Type':'text/html'}); res.end('<h3>Erro: token ausente</h3>'); return; }
+                    // Decode the JWT payload (Apple id_token is a standard JWT)
+                    const parts = idToken.split('.');
+                    if (parts.length < 2) { res.writeHead(400, {'Content-Type':'text/html'}); res.end('<h3>Token invalido</h3>'); return; }
+                    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+                    // payload.sub = Apple user ID, payload.email = user email (first login only)
+                    const appleUserId = payload.sub;
+                    const appleEmail = payload.email || '';
+                    // Check if user data was sent (first login only)
+                    let userName = '';
+                    const userStr = params.get('user');
+                    if (userStr) {
+                        try { const u = JSON.parse(userStr); userName = ((u.name || {}).firstName || '') + ' ' + ((u.name || {}).lastName || ''); userName = userName.trim(); } catch(_) {}
+                    }
+                    // Find or create user
+                    let user = data.users.find(u => u.appleId === appleUserId);
+                    if (!user && appleEmail) { user = data.users.find(u => u.email === appleEmail.toLowerCase()); }
+                    if (user) {
+                        // Link Apple ID if not already linked
+                        if (!user.appleId) { user.appleId = appleUserId; saveUsers(); }
+                    } else {
+                        // Create new user
+                        user = {
+                            id: generateId(),
+                            username: userName ? userName.toLowerCase().replace(/[^a-z0-9]/g, '') : 'apple_' + appleUserId.slice(0, 8),
+                            email: (appleEmail || appleUserId + '@privaterelay.appleid.com').toLowerCase(),
+                            password: hashPassword(crypto.randomBytes(32).toString('hex')),
+                            name: userName || 'Apple User',
+                            role: 'user',
+                            appleId: appleUserId,
+                            emailVerified: true,
+                            createdAt: new Date().toISOString()
+                        };
+                        // Avoid duplicate usernames
+                        while (data.users.find(u => u.username === user.username)) { user.username += Math.floor(Math.random() * 100); }
+                        data.users.push(user);
+                        saveUsers();
+                        console.log('[APPLE] New user created: ' + user.username + ' (' + user.email + ')');
+                    }
+                    const token = createToken(user);
+                    // Redirect back to the app with the token in a fragment
+                    res.writeHead(200, {'Content-Type':'text/html'});
+                    res.end('<!DOCTYPE html><html><head><meta charset="utf-8"><title>DataToalha</title></head><body style="background:#06060F;color:#f4f4fb;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div style="text-align:center;"><h2>Login com Apple concluido!</h2><p>Redirecionando...</p></div><script>localStorage.setItem("dt_app_token","' + token + '");localStorage.setItem("dt_apple_user","' + user.id + '");window.location.href="/app";</script></body></html>');
+                } catch(e) {
+                    console.log('[APPLE] callback error:', e.message);
+                    res.writeHead(500, {'Content-Type':'text/html'}); res.end('<h3>Erro interno: ' + e.message + '</h3>');
+                }
+            });
+            return;
+        }
+
         // Get current user info
         if (apiPath === 'current-user' && req.method === 'GET') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ message: 'Use login endpoint' }));
+            const session = await getSession(req);
+            if (!session) { res.writeHead(401, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Not logged in'})); return; }
+            const user = data.users.find(u => u.id === session.id);
+            if (!user) { res.writeHead(404, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'User not found'})); return; }
+            const { password: pwd, verifyCode: vc, resetCode: rc, ...safeUser } = user;
+            res.writeHead(200, {'Content-Type':'application/json'});
+            res.end(JSON.stringify(safeUser));
             return;
         }
 

@@ -1350,7 +1350,7 @@ const html = `
                 <h3>Editar perfil</h3>
                 <div style="display:flex;flex-direction:column;gap:10px;">
                     <div class="form-group"><label>Nome</label><input type="text" id="editProfileName" placeholder="Seu nome"></div>
-                    <div class="form-group"><label>Username</label><input type="text" id="editProfileUsername" placeholder="Username"></div>
+                    <div class="form-group"><label>Username</label><input type="text" id="editProfileUsername" disabled style="opacity:0.5;cursor:not-allowed;"><span style="font-size:11px;color:var(--c-text-mute);">Username nao pode ser alterado</span></div>
                     <button class="btn" onclick="saveProfile()">Salvar alteracoes</button>
                     <p id="profileStatus" style="font-size:12px;margin:0;"></p>
                 </div>
@@ -4183,17 +4183,15 @@ const html = `
         }
         async function saveProfile() {
             var name = (document.getElementById('editProfileName').value || '').trim();
-            var username = (document.getElementById('editProfileUsername').value || '').trim();
             var status = document.getElementById('profileStatus');
-            if (!name || !username) { status.style.color = '#ff4444'; status.textContent = 'Nome e username obrigatorios'; return; }
+            if (!name) { status.style.color = '#ff4444'; status.textContent = 'Nome obrigatorio'; return; }
             status.style.color = 'var(--c-text-mute)'; status.textContent = 'Salvando...';
-            var result = await api('/update-profile', 'PUT', { name: name, username: username });
+            var result = await api('/update-profile', 'PUT', { name: name });
             if (result && result.success) {
                 status.style.color = '#4caf50'; status.textContent = 'Perfil atualizado!';
-                currentUser.name = name; currentUser.username = username;
+                currentUser.name = name;
                 document.getElementById('currentUserName').textContent = name;
                 document.getElementById('accountName').textContent = name;
-                document.getElementById('accountUsername').textContent = username;
                 setTimeout(function() { status.textContent = ''; }, 2000);
             } else {
                 status.style.color = '#ff4444'; status.textContent = (result && result.error) || 'Erro ao salvar';
@@ -4619,16 +4617,12 @@ const server = http.createServer(async (req, res) => {
         req.on('data', c => { body += c; if (body.length > MAX_BODY) { req.destroy(); } });
         req.on('end', () => {
             try {
-                const { name, username } = JSON.parse(body);
+                const { name } = JSON.parse(body);
                 const userId = session.userId || session.id;
                 const user = data.users.find(u => u.id === userId);
                 if (!user) { res.writeHead(404, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Usuario nao encontrado'})); return; }
-                if (username && username !== user.username) {
-                    const taken = data.users.find(u => u.username === username && u.id !== userId);
-                    if (taken) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Username ja em uso'})); return; }
-                    user.username = username.trim();
-                }
-                if (name) user.name = name.trim();
+                if (!name || !name.trim()) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Nome obrigatorio'})); return; }
+                user.name = name.trim();
                 saveUsers();
                 res.writeHead(200, {'Content-Type':'application/json'});
                 res.end(JSON.stringify({success:true, user:{id:user.id, name:user.name, username:user.username, email:user.email, role:user.role}}));

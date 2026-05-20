@@ -1050,7 +1050,7 @@ const html = `
         <button class="active" onclick="showSection('home')">🏠<span>Início</span></button>
         <button onclick="showSection('vote')">📊<span>Opinar</span></button>
         <button onclick="showSection('results')">📈<span>Resultados</span></button>
-        <button onclick="showSection('candidates')">👥<span>Personalidades</span></button>
+        <button onclick="showSection('candidates')">👥<span>Candidatos</span></button>
         <button onclick="showSection('polls')">📝<span>Enquetes</span></button>
         <button onclick="showSection('account')">👤<span>Conta</span></button>
         <!-- <button onclick="showSection('products')">🎁<span>Brindes</span></button> -->  <!-- v1: hidden for App Store IAP scope -->
@@ -1078,7 +1078,7 @@ const html = `
                 </div>
                 <div class="stat-card">
                     <div class="value" id="totalCandidates">0</div>
-                    <div class="label">Personalidades</div>
+                    <div class="label">Candidatos</div>
                 </div>
                 <div class="stat-card">
                     <div class="value" id="totalCountries">0</div>
@@ -1256,7 +1256,7 @@ const html = `
         <!-- CANDIDATES -->
         <div id="candidates" class="section">
             <div class="header">
-                <div style="display:flex;align-items:center;gap:10px;"><img src="/logo?v=2" style="width:36px;height:36px;border-radius:8px;" alt=""><h2>Personalidades</h2></div>
+                <div style="display:flex;align-items:center;gap:10px;"><img src="/logo?v=2" style="width:36px;height:36px;border-radius:8px;" alt=""><h2>Candidatos</h2></div>
             </div>
             
             <div class="search-box">
@@ -1439,7 +1439,7 @@ const html = `
             <!-- Admin stats -->
             <div class="card">
                 <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-                    <span>Personalidades: <strong id="adminCandidates">0</strong></span>
+                    <span>Candidatos: <strong id="adminCandidates">0</strong></span>
                     <span>Opinioes: <strong id="adminVotes">0</strong></span>
                     <span>Enquetes: <strong id="adminPolls">0</strong></span>
                 </div>
@@ -1448,7 +1448,7 @@ const html = `
             <!-- Admin tabs -->
             <div style="display:flex;gap:4px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px;">
                 <button class="btn btn-small" onclick="showAdminTab('enquetes')" id="adminTab_enquetes" style="white-space:nowrap;">📝 Enquetes</button>
-                <button class="btn btn-small btn-secondary" onclick="showAdminTab('personalidades')" id="adminTab_personalidades" style="white-space:nowrap;">👥 Personalidades</button>
+                <button class="btn btn-small btn-secondary" onclick="showAdminTab('personalidades')" id="adminTab_personalidades" style="white-space:nowrap;">👥 Candidatos</button>
                 <button class="btn btn-small btn-secondary" onclick="showAdminTab('emalta')" id="adminTab_emalta" style="white-space:nowrap;">🔥 Em Alta</button>
                 <button class="btn btn-small btn-secondary" onclick="showAdminTab('usuarios')" id="adminTab_usuarios" style="white-space:nowrap;">👤 Usuarios</button>
                 <button class="btn btn-small btn-secondary" onclick="showAdminTab('moderacao')" id="adminTab_moderacao" style="white-space:nowrap;">🚩 Moderacao</button>
@@ -1467,7 +1467,7 @@ const html = `
                 </div>
             </div>
 
-            <!-- TAB: Personalidades (organized by enquete) -->
+            <!-- TAB: Candidatos (organized by enquete) -->
             <div id="adminPanel_personalidades" style="display:none;">
                 <div class="card">
                     <h3>Filtrar por enquete</h3>
@@ -1517,7 +1517,7 @@ const html = `
                     <button class="btn" style="margin-top:10px;width:100%;" onclick="addCandidate()">Adicionar</button>
                 </div>
                 <div class="card">
-                    <h3>Personalidades</h3>
+                    <h3>Candidatos</h3>
                     <div class="search-box">
                         <input type="text" id="adminCandidateSearch" placeholder="Buscar..." oninput="loadAdminCandidatesForPoll()">
                     </div>
@@ -1945,7 +1945,7 @@ const html = `
             
             if (!candidates) return;
             
-            let html = '<label style="display:block;margin-bottom:6px;">Personalidades — ' + role + '</label>';
+            let html = '<label style="display:block;margin-bottom:6px;">Candidatos — ' + role + '</label>';
             html += '<p style="font-size:13px;color:var(--c-cyan-soft);margin-bottom:12px;">Clique no candidato para selecionar e depois submeta seu voto.</p>';
             if (candidates.length === 0) {
                 html += '<div class="empty-state" style="padding:24px;color:var(--c-text-mute);"><p>Nenhuma personalidade cadastrada para esta selecao.</p></div>';
@@ -2480,21 +2480,90 @@ const html = `
                 return;
             }
             
+            // Find which polls each candidate appears in
+            const polls = await api('/polls');
+            const candPolls = {};
+            (polls || []).forEach(p => {
+                (p.options || []).forEach(o => {
+                    const optName = (typeof o === 'string' ? o : (o.text || '')).toLowerCase();
+                    if (!candPolls[optName]) candPolls[optName] = [];
+                    candPolls[optName].push({ id: p.id, title: p.title, approved: p.approved });
+                });
+            });
+
             let html = '<div class="card-grid">';
             candidates.forEach(c => {
-                html += '<div class="card" style="padding:14px;">';
+                const nameLower = (c.name || '').toLowerCase();
+                const inPolls = candPolls[nameLower] || [];
+                // Political candidates are in their role-based race
+                const isPolitical = c.type !== 'community';
+
+                html += '<div class="card" style="padding:14px;cursor:pointer;" onclick="showCandidateDetail(\\x27' + c.id + '\\x27)">';
                 html += avatarHtml(c.name, c.photoUrl);
                 html += '<div style="margin-top:8px;">';
                 html += '<p style="font-weight:700;font-size:15px;color:var(--c-text);">' + (c.name || '-') + '</p>';
                 html += '<p style="font-size:13px;color:var(--c-cyan-soft);">' + (c.party || '-') + '</p>';
                 html += '<p style="font-size:12px;color:var(--c-text-mute);">' + (c.role || '-') + '</p>';
                 html += '<p style="font-size:12px;color:var(--c-text-dim);">' + (c.country || '-') + (c.state && c.state !== 'N/A' ? ' — ' + c.state : '') + '</p>';
+                if (isPolitical) {
+                    html += '<p style="font-size:11px;color:#4caf50;margin-top:4px;">Oficial by DataToalha</p>';
+                }
+                if (inPolls.length > 0) {
+                    html += '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;">';
+                    inPolls.forEach(p => {
+                        html += '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(94,233,255,0.1);color:var(--c-cyan-soft);">📊 ' + p.title + '</span>';
+                    });
+                    html += '</div>';
+                }
                 html += '</div></div>';
             });
             html += '</div>';
             document.getElementById('candidatesTable').innerHTML = html;
         }
         
+        async function showCandidateDetail(candId) {
+            const candidates = await api('/all-candidates');
+            const c = candidates ? candidates.find(x => x.id === candId) : null;
+            if (!c) return;
+            const polls = await api('/polls');
+            const inPolls = [];
+            (polls || []).forEach(p => {
+                (p.options || []).forEach(o => {
+                    if ((typeof o === 'string' ? o : (o.text || '')).toLowerCase() === (c.name || '').toLowerCase()) {
+                        inPolls.push(p);
+                    }
+                });
+            });
+            // For political candidates, show their race
+            const isPolitical = c.type !== 'community';
+            let html = '<button class="btn btn-small btn-secondary" onclick="loadCandidatesList()" style="margin-bottom:12px;">← Voltar</button>';
+            html += '<div class="card" style="padding:20px;text-align:center;">';
+            html += avatarHtml(c.name, c.photoUrl);
+            html += '<h3 style="margin:12px 0 4px;color:var(--c-text);">' + (c.name || '-') + '</h3>';
+            html += '<p style="color:var(--c-cyan-soft);font-size:14px;">' + (c.party || '-') + '</p>';
+            html += '<p style="color:var(--c-text-mute);font-size:13px;">' + (c.role || '-') + ' — ' + (c.country || '-') + '</p>';
+            if (isPolitical) html += '<p style="color:#4caf50;font-size:11px;margin-top:6px;">Oficial by DataToalha</p>';
+            html += '</div>';
+            if (inPolls.length > 0) {
+                html += '<div class="card" style="padding:14px;"><h4 style="margin:0 0 10px;color:var(--c-text);">Enquetes (' + inPolls.length + ')</h4>';
+                inPolls.forEach(p => {
+                    html += '<div style="padding:8px;margin-bottom:6px;background:rgba(255,255,255,0.04);border-radius:8px;cursor:pointer;" onclick="showSection(\\x27results\\x27);setTimeout(function(){var i=document.getElementById(\\x27pollCodeSearch\\x27);if(i){i.value=\\x27' + (p.shareCode || '') + '\\x27;searchPollByCode();}},300);">';
+                    html += '<p style="font-weight:600;color:var(--c-text);">📊 ' + p.title + '</p>';
+                    html += '<p style="font-size:11px;color:var(--c-text-mute);">' + (p.category || '') + (p.approved ? ' · Aprovada' : ' · Pendente') + '</p>';
+                    html += '</div>';
+                });
+                html += '</div>';
+            }
+            if (isPolitical) {
+                html += '<div class="card" style="padding:14px;"><h4 style="margin:0 0 10px;color:var(--c-text);">Pesquisa politica</h4>';
+                html += '<div style="padding:8px;background:rgba(255,255,255,0.04);border-radius:8px;cursor:pointer;" onclick="showSection(\\x27results\\x27)">';
+                html += '<p style="font-weight:600;color:var(--c-text);">' + c.role + ' — ' + c.country + '</p>';
+                html += '<p style="font-size:11px;color:#4caf50;">Oficial by DataToalha · Toque para ver resultados</p>';
+                html += '</div></div>';
+            }
+            document.getElementById('candidatesTable').innerHTML = html;
+        }
+
         async function loadPolls() {
             var [polls, myPollVotes, myPoliticalVotes] = await Promise.all([
                 api('/polls'), api('/my-votes'), api('/votes')

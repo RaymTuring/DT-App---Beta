@@ -2044,7 +2044,7 @@ const html = `
                 html += '<div class="voted-badge" style="padding:10px;margin-bottom:15px;">You have already voted in this poll</div>';
             } else {
                 poll.options.forEach(opt => {
-                    html += '<div class="candidate-row" onclick="selectPollOption(\\'' + poll.id + '\\', \\'' + opt.id + '\\', \\'' + opt.text.replace(/'/g, "\\\\'") + '\\')">';
+                    html += '<div class="candidate-row" onclick="selectPollOption(\\x27' + poll.id + '\\x27, \\x27' + opt.id + '\\x27, \\x27' + (opt.text || '').replace(/'/g, '') + '\\x27)">';
                     html += '<input type="radio" name="poll_' + poll.id + '" value="' + opt.id + '">';
                     html += '<div class="candidate-info"><div class="candidate-name">' + opt.text + '</div></div>';
                     html += '</div>';
@@ -2340,7 +2340,7 @@ const html = `
                     
                     if (selectedCategory === '') {
                         // General view - one line, clickable
-                        communityHtml += '<div class="poll-card" style="cursor:pointer;" onclick="viewPollResults(\\'' + p.id + '\\')">';
+                        communityHtml += '<div class="poll-card" style="cursor:pointer;" onclick="viewPollResults(\\x27' + p.id + '\\x27)">';
                         communityHtml += '<div class="poll-header"><h4>' + p.title + '</h4>';
                         communityHtml += '<span class="poll-type-badge badge-community">' + (p.category || 'Other') + '</span>';
                         communityHtml += '</div>';
@@ -2910,8 +2910,8 @@ const html = `
                 let html = '<table><tr><th>Title</th><th>Category</th><th>Code</th><th>Votes</th><th>Action</th></tr>';
                 pendingPolls.forEach(p => {
                     html += '<tr><td>' + p.title + '</td><td>' + (p.category || 'N/A') + '</td><td>' + p.shareCode + '</td><td>' + p.votes + '</td>';
-                    html += '<td><button class="btn btn-success btn-small" onclick="approvePoll(\\'' + p.id + '\\')">Approve</button> ';
-                    html += '<button class="btn btn-danger btn-small" onclick="removePoll(\\'' + p.id + '\\')">Reject</button></td></tr>';
+                    html += '<td><button class="btn btn-success btn-small" onclick="approvePoll(\\x27' + p.id + '\\x27)">Approve</button> ';
+                    html += '<button class="btn btn-danger btn-small" onclick="removePoll(\\x27' + p.id + '\\x27)">Reject</button></td></tr>';
                 });
                 html += '</table>';
                 document.getElementById('adminPendingPollsList').innerHTML = html;
@@ -4205,6 +4205,7 @@ const html = `
             } else {
                 status.style.color = '#ff4444'; status.textContent = (result && result.error) || 'Erro ao salvar';
             }
+        }
         // In-app privacy/terms viewer
         async function showInAppPage(page) {
             try {

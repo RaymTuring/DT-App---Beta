@@ -1047,7 +1047,7 @@ const html = `
         <button onclick="showSection('polls')">📝<span>Enquetes</span></button>
         <button onclick="showSection('account')">👤<span>Conta</span></button>
         <!-- <button onclick="showSection('products')">🎁<span>Brindes</span></button> -->  <!-- v1: hidden for App Store IAP scope -->
-        <button id="adminMenuBtn" class="admin-only" onclick="showSection('admin')">⚙️<span>Admin</span></button>
+        <button id="adminMenuBtn" class="admin-only" style="display:none;" onclick="showSection('admin')">⚙️<span>Admin</span></button>
         <div style="margin-top:auto;padding-top:20px;border-top:1px solid #444;">
             <p style="font-size:12px;color:#888;margin-bottom:5px;">Conectado como:</p>
             <p style="font-size:14px;color:#4A90D9;margin-bottom:10px;" id="currentUserName">-</p>
@@ -1404,7 +1404,7 @@ const html = `
                     <label>Confirmacao</label>
                     <input type="text" id="deleteConfirm" placeholder="Digite EXCLUIR" autocomplete="off">
                 </div>
-                <div class="form-group">
+                <div class="form-group" id="deletePasswordGroup">
                     <label>Senha</label>
                     <input type="password" id="deletePassword" placeholder="Sua senha" autocomplete="current-password">
                 </div>
@@ -3939,6 +3939,7 @@ const html = `
             const label = provider.charAt(0).toUpperCase() + provider.slice(1);
             const pretty = label === 'Apple' ? 'Apple' : label === 'Google' ? 'Google' : 'Facebook';
             if (provider === 'apple') {
+                // Navigate within the WebView — callback sets token + redirects back
                 window.location.href = BASE + '/api/auth/apple';
                 return;
             }
@@ -4005,6 +4006,10 @@ const html = `
                             document.body.classList.add('admin-mode');
                             var adminBtn = document.getElementById('adminMenuBtn');
                             if (adminBtn) adminBtn.style.display = 'block';
+                        } else {
+                            document.body.classList.remove('admin-mode');
+                            var adminBtn2 = document.getElementById('adminMenuBtn');
+                            if (adminBtn2) adminBtn2.style.display = 'none';
                         }
                         showSection('home');
                     }
@@ -4157,6 +4162,9 @@ const html = `
             set('accountUsername', u.username);
             set('accountEmail', u.email);
             set('accountSince', fmt(u.createdAt));
+            // Hide password field for Apple Sign In users
+            var pwGroup = document.getElementById('deletePasswordGroup');
+            if (pwGroup) pwGroup.style.display = u.appleId ? 'none' : 'block';
         }
         // In-app privacy/terms viewer
         async function showInAppPage(page) {
@@ -4189,7 +4197,8 @@ const html = `
                 status.textContent = 'Digite EXCLUIR para confirmar.';
                 return;
             }
-            if (!password) {
+            var isAppleUser = currentUser && currentUser.appleId;
+            if (!password && !isAppleUser) {
                 status.textContent = 'Sua senha e obrigatoria para excluir a conta.';
                 return;
             }
@@ -4197,10 +4206,10 @@ const html = `
             status.style.color = 'var(--c-text-mute)';
             status.textContent = 'Excluindo conta...';
             try {
-                const token = localStorage.getItem('dt_token') || '';
+                var tk2 = localStorage.getItem('dt_app_token'); try { if (authToken) tk2 = authToken; } catch(_) {}
                 const res = await fetch(BASE + '/api/account/delete', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (tk2 || '') },
                     body: JSON.stringify({ confirm: confirm, password: password })
                 });
                 const data = await res.json().catch(() => ({}));
@@ -4589,10 +4598,13 @@ const server = http.createServer(async (req, res) => {
                     res.writeHead(404, {'Content-Type':'application/json'});
                     return res.end(JSON.stringify({error:'Conta nao encontrada.'}));
                 }
-                const ok = await Promise.resolve(verifyPassword(password, user.password));
-                if (!ok) {
-                    res.writeHead(403, {'Content-Type':'application/json'});
-                    return res.end(JSON.stringify({error:'Senha incorreta.'}));
+                // Apple Sign In users have no password — skip password check if appleId is set
+                if (!user.appleId) {
+                    const ok = await Promise.resolve(verifyPassword(password, user.password));
+                    if (!ok) {
+                        res.writeHead(403, {'Content-Type':'application/json'});
+                        return res.end(JSON.stringify({error:'Senha incorreta.'}));
+                    }
                 }
                 data.votes = (data.votes||[]).filter(v => v.userId !== userId && v.voterId !== userId);
                 data.pollVotes = (data.pollVotes||[]).filter(v => v.userId !== userId && v.voterId !== userId);
@@ -5019,8 +5031,9 @@ const server = http.createServer(async (req, res) => {
             return;
         }
 
-        // Save Rankings
+        // Save Rankings (ADMIN ONLY)
         if (apiPath === 'save-rankings' && req.method === 'POST') {
+            const session = await getSession(req); if (!session || session.role !== 'admin') { res.writeHead(403,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Admin required'})); return; }
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -5265,8 +5278,10 @@ const server = http.createServer(async (req, res) => {
             return;
         }
         
-        // DELETE votes
+        // DELETE votes (ADMIN ONLY)
         if (apiPath === 'votes' && req.method === 'DELETE') {
+            const session = await getSession(req);
+            if (!session || session.role !== 'admin') { res.writeHead(403, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Admin required'})); return; }
             data.votes = [];
             data.pollVotes = [];
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -5294,9 +5309,10 @@ const server = http.createServer(async (req, res) => {
             return;
         }
         
-        // Approve poll
+        // Approve poll (ADMIN ONLY)
         const approveMatch = apiPath.match(/^polls\/approve\/(.+)$/);
         if (approveMatch && req.method === 'POST') {
+            const session = await getSession(req); if (!session || session.role !== 'admin') { res.writeHead(403,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Admin required'})); return; }
             const id = approveMatch[1];
             const poll = data.polls.find(p => p.id === id);
             if (poll) {
@@ -5357,9 +5373,10 @@ const server = http.createServer(async (req, res) => {
             return;
         }
         
-        // DELETE poll
+        // DELETE poll (ADMIN ONLY)
         const pollsMatch = apiPath.match(/^polls\/(.+)$/);
         if (pollsMatch && req.method === 'DELETE') {
+            const session = await getSession(req); if (!session || session.role !== 'admin') { res.writeHead(403,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Admin required'})); return; }
             const id = pollsMatch[1];
             const poll = data.polls.find(p => p.id === id);
             data.polls = data.polls.filter(p => p.id !== id);
@@ -5380,8 +5397,9 @@ const server = http.createServer(async (req, res) => {
             return;
         }
         
-        // POST candidate
+        // POST candidate (ADMIN ONLY)
         if (apiPath === 'candidates' && req.method === 'POST') {
+            const session = await getSession(req); if (!session || session.role !== 'admin') { res.writeHead(403,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Admin required'})); return; }
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -5400,9 +5418,10 @@ const server = http.createServer(async (req, res) => {
             return;
         }
         
-        // PUT candidate (edit)
+        // PUT candidate (ADMIN ONLY)
         const candidatesMatch = apiPath.match(/^candidates\/(.+)$/);
         if (candidatesMatch && req.method === 'PUT') {
+            const session = await getSession(req); if (!session || session.role !== 'admin') { res.writeHead(403,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Admin required'})); return; }
             let body = '';
             req.on('data', chunk => body += chunk);
             req.on('end', () => {
@@ -5426,8 +5445,9 @@ const server = http.createServer(async (req, res) => {
             return;
         }
 
-        // DELETE candidate
+        // DELETE candidate (ADMIN ONLY)
         if (candidatesMatch && req.method === 'DELETE') {
+            const session = await getSession(req); if (!session || session.role !== 'admin') { res.writeHead(403,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Admin required'})); return; }
             const id = candidatesMatch[1];
             data.candidates = data.candidates.filter(c => c.id !== id);
             saveCandidates();
@@ -5436,8 +5456,9 @@ const server = http.createServer(async (req, res) => {
             return;
         }
         
-        // Export
+        // Export (ADMIN ONLY)
         if (apiPath === 'export' && req.method === 'GET') {
+            const session = await getSession(req); if (!session || session.role !== 'admin') { res.writeHead(403,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Admin required'})); return; }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
                 candidates: data.candidates,
@@ -5667,12 +5688,10 @@ const server = http.createServer(async (req, res) => {
                     if (userStr) {
                         try { const u = JSON.parse(userStr); userName = ((u.name || {}).firstName || '') + ' ' + ((u.name || {}).lastName || ''); userName = userName.trim(); } catch(_) {}
                     }
-                    // Find or create user
+                    // Find or create user — NEVER link by email to prevent privilege escalation
                     let user = data.users.find(u => u.appleId === appleUserId);
-                    if (!user && appleEmail) { user = data.users.find(u => u.email === appleEmail.toLowerCase()); }
                     if (user) {
-                        // Link Apple ID if not already linked
-                        if (!user.appleId) { user.appleId = appleUserId; saveUsers(); }
+                        // Already linked — use existing account
                     } else {
                         // Create new user
                         user = {
